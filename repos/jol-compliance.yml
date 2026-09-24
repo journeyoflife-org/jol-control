@@ -1,0 +1,63 @@
+# Allow-list definition for jol-compliance
+# Managed by jol-control — DO NOT edit outside this repo.
+# Compliance: SOC2 / GDPR / ISO 27001
+
+name: jol-compliance
+description: "Compliance program management \u2014 control frameworks, policy enforcement, and continuous compliance monitoring\
+  \ for the Journey of Life platform."
+visibility: public
+tier: governance
+language: Python
+topics:
+- compliance
+- governance
+- soc2
+- gdpr
+- iso27001
+- audit
+settings:
+  has_issues: true
+  has_wiki: false
+  has_projects: false
+  delete_branch_on_merge: true
+  allow_merge_commit: false
+  allow_squash_merge: true
+  allow_rebase_merge: true
+  vulnerability_alerts: true
+  archived: false
+  is_template: false
+  auto_init: false
+branch_protection:
+  main:
+    required_status_checks:
+      strict: true
+      contexts:
+      - compliance-scan / validate
+      - codeql-analysis
+    required_pull_request_reviews:
+      required_approving_review_count: 2
+      dismiss_stale_reviews: true
+      require_code_owner_reviews: true
+      require_last_push_approval: true
+    enforce_admins: true
+    restrict_pushes: true
+    require_signed_commits: true
+    require_linear_history: true
+    block_force_pushes: true
+    block_deletions: true
+teams:
+  platform-admins: admin
+  developers: pull
+  auditors: pull
+compliance:
+  frameworks:
+  - soc2
+  - gdpr
+  - iso27001
+  data_classification: confidential
+  required_gates:
+    dependency_scan: true
+    secret_scan: true
+    license_check: true
+    code_quality: true
+    security_review: true

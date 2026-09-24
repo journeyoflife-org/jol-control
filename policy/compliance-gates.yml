@@ -1,0 +1,188 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Compliance Gates — enforced security & compliance checks for ALL repos
+# ──────────────────────────────────────────────────────────────────────────────
+# Owner:      journeyoflife-org/platform-admins
+# Compliance: SOC 2 Type II · GDPR · ISO 27001:2022 · PCI-DSS 4.0
+# ──────────────────────────────────────────────────────────────────────────────
+
+metadata:
+  version: "1.0.0"
+  last_reviewed: "2026-09-24"
+  next_review: "2026-12-24"
+  owner: "platform-admins"
+  approved_by: "Gintaras Kazlauskas"
+
+gates:
+  dependency_scan:
+    id: "dependency-review"
+    description: "Block PRs that introduce known-vulnerable dependencies"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "gdpr", "iso27001", "pci-dss"]
+    soc2_controls: ["CC7.1", "CC7.2"]
+    iso_controls: ["A.8.8", "A.8.19"]
+    implementation:
+      tool: "GitHub Dependency Review Action"
+      action: "actions/dependency-review-action@v4"
+      fail_on_severity: "moderate"
+      deny_licenses: ["GPL-3.0", "AGPL-3.0"]
+      run_on: ["pull_request"]
+    remediation:
+      - "Update the vulnerable dependency to a patched version"
+      - "If no patch available, document risk acceptance in jol-compliance-evidence"
+
+  secret_scan:
+    id: "secret-scanning"
+    description: "Prevent secrets, tokens, and credentials from entering git history"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "gdpr", "iso27001", "pci-dss"]
+    soc2_controls: ["CC6.1", "CC6.6"]
+    iso_controls: ["A.5.10", "A.7.1"]
+    implementation:
+      tool: "GitHub Secret Scanning + Push Protection"
+      native: true
+      custom_patterns:
+        - pattern: "jol_(live|test)_[a-zA-Z0-9]{32,}"
+          description: "JOL platform API keys"
+      run_on: ["push", "pull_request"]
+    remediation:
+      - "Immediately rotate the exposed secret"
+      - "Remove from git history with git-filter-repo or BFG"
+      - "File incident report in jol-incident-response"
+
+  license_check:
+    id: "license-check"
+    description: "Ensure all dependencies use approved licenses"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "iso27001"]
+    soc2_controls: ["CC6.1"]
+    iso_controls: ["A.5.10"]
+    implementation:
+      tool: "license-checker"
+      allowed_licenses:
+        - "MIT"
+        - "Apache-2.0"
+        - "BSD-2-Clause"
+        - "BSD-3-Clause"
+        - "ISC"
+        - "Unlicense"
+        - "CC0-1.0"
+        - "0BSD"
+      denied_licenses:
+        - "GPL-2.0"
+        - "GPL-3.0"
+        - "AGPL-3.0"
+        - "SSPL-1.0"
+      run_on: ["pull_request"]
+
+  code_quality:
+    id: "code-quality"
+    description: "Enforce minimum code quality standards"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "iso27001"]
+    soc2_controls: ["CC7.1"]
+    iso_controls: ["A.8.25"]
+    implementation:
+      tools:
+        python:
+          - "ruff"
+          - "mypy --strict"
+          - "pytest --cov --cov-fail-under=80"
+        javascript:
+          - "eslint"
+          - "tsc --noEmit"
+          - "jest --coverage"
+        terraform:
+          - "terraform fmt -check"
+          - "terraform validate"
+          - "tflint"
+          - "checkov"
+      run_on: ["pull_request"]
+
+  sast:
+    id: "codeql-analysis"
+    description: "CodeQL semantic analysis for security vulnerabilities"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "iso27001", "pci-dss"]
+    soc2_controls: ["CC7.1", "CC7.2"]
+    iso_controls: ["A.8.8", "A.8.25"]
+    pci_controls: ["6.3.1", "6.3.2"]
+    implementation:
+      tool: "GitHub CodeQL"
+      languages: ["python", "javascript", "typescript", "go"]
+      queries: "security-extended"
+      fail_on: ["error", "warning"]
+      run_on: ["pull_request", "push"]
+
+  iac_scan:
+    id: "iac-security"
+    description: "Scan Terraform/Kubernetes/Docker configs for security misconfigurations"
+    enforcement: "mandatory_for_tier:governance,platform,devops"
+    frameworks: ["soc2", "iso27001", "pci-dss"]
+    soc2_controls: ["CC7.1"]
+    iso_controls: ["A.8.8"]
+    implementation:
+      tools:
+        - "checkov"
+        - "tflint"
+        - "kubeval"
+        - "trivy"
+      run_on: ["pull_request"]
+
+  container_scan:
+    id: "container-scan"
+    description: "Scan container images for OS and dependency vulnerabilities"
+    enforcement: "mandatory_for_tier:platform,devops"
+    frameworks: ["soc2", "iso27001", "pci-dss"]
+    soc2_controls: ["CC7.1"]
+    iso_controls: ["A.8.8"]
+    implementation:
+      tool: "Trivy"
+      fail_on_severity: "HIGH"
+      scan_targets: ["os", "library"]
+      run_on: ["pull_request"]
+
+  iac_policy:
+    id: "iac-policy"
+    description: "Enforce organizational policies via OPA/Conftest on Terraform plans"
+    enforcement: "mandatory_for_tier:governance,platform,devops"
+    frameworks: ["soc2", "iso27001"]
+    soc2_controls: ["CC6.1", "CC8.1"]
+    iso_controls: ["A.5.1", "A.8.1"]
+    implementation:
+      tool: "conftest"
+      policy_dir: "policy/opa"
+      rules:
+        - "deny public S3 buckets"
+        - "deny unencrypted RDS instances"
+        - "deny missing VPC flow logs"
+        - "require tags: CostCenter, Environment, Owner"
+        - "deny overly permissive IAM policies"
+        - "deny security groups with 0.0.0.0/0 ingress on sensitive ports"
+      run_on: ["pull_request"]
+
+enforcement_matrix:
+  governance:
+    required: ["dependency_scan", "secret_scan", "license_check", "code_quality", "sast", "iac_scan", "iac_policy"]
+    optional: ["container_scan"]
+  platform:
+    required: ["dependency_scan", "secret_scan", "license_check", "code_quality", "sast", "container_scan"]
+    optional: ["iac_scan"]
+  devops:
+    required: ["dependency_scan", "secret_scan", "license_check", "code_quality", "sast", "iac_scan", "container_scan"]
+    optional: []
+  site:
+    required: ["dependency_scan", "secret_scan", "license_check", "code_quality", "sast"]
+    optional: ["container_scan"]
+  template:
+    required: ["dependency_scan", "secret_scan", "license_check", "code_quality"]
+    optional: ["sast"]
+
+exceptions:
+  process: "Any gate exception must be documented in jol-compliance-evidence with:"
+  requirements:
+    - "Risk description and business justification"
+    - "Compensating controls"
+    - "Time-bound acceptance (max 90 days, then re-evaluate)"
+    - "Approval from platform-admins + security team"
+    - "Link to relevant ADR in jol-docs"
+  review_cadence: "Quarterly — all active exceptions reviewed by security team"

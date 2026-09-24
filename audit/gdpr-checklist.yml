@@ -1,0 +1,122 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# GDPR — Article-by-Article Compliance Checklist
+# ──────────────────────────────────────────────────────────────────────────────
+# Mapped to jol-control enforcement points.
+# Platform: 400K websites, 27 EU member states
+# Review cadence: Quarterly
+# Last reviewed: 2026-09-24
+# ──────────────────────────────────────────────────────────────────────────────
+
+framework: "GDPR"
+version: "Regulation (EU) 2016/679"
+owner: "platform-admins"
+dpo_contact: "dpo@journeyoflife.org"
+
+articles:
+  Art5:
+    title: "Principles relating to processing of personal data"
+    controls:
+      - id: "Art5-01"
+        description: "Data processing purposes documented per repository"
+        evidence: "jol-privacy repository — processing records"
+        enforcement: "Manual review"
+        status: "implemented"
+
+  Art25:
+    title: "Data protection by design and by default"
+    controls:
+      - id: "Art25-01"
+        description: "Data classification enforced per repository"
+        evidence: "repos/*.yml compliance.data_classification"
+        enforcement: "scripts/validate_repos.py"
+        status: "implemented"
+      - id: "Art25-02"
+        description: "No personal data in git history (secrets_in_git: prohibited)"
+        evidence: "policy/repo-defaults.yml data_handling"
+        enforcement: "CI: secret_scan gate"
+        status: "implemented"
+      - id: "Art25-03"
+        description: "Wiki disabled on all repos (prevents uncontrolled data storage)"
+        evidence: "has_wiki: false in all repo definitions"
+        enforcement: "terraform: github_repository"
+        status: "implemented"
+
+  Art30:
+    title: "Records of processing activities"
+    controls:
+      - id: "Art30-01"
+        description: "Processing activities recorded in jol-privacy"
+        evidence: "jol-privacy repository"
+        enforcement: "Manual review"
+        status: "implemented"
+      - id: "Art30-02"
+        description: "Repository access logs maintained via GitHub audit log"
+        evidence: "GitHub organization audit log + webhook streaming"
+        enforcement: "terraform: github_organization_webhook"
+        status: "implemented"
+
+  Art32:
+    title: "Security of processing"
+    controls:
+      - id: "Art32-01"
+        description: "Access control via team-based permissions"
+        evidence: "github_team_repository resources"
+        enforcement: "terraform: team assignments"
+        status: "implemented"
+      - id: "Art32-02"
+        description: "Encryption in transit (HTTPS/SSH for all git operations)"
+        evidence: "SSH remotes enforced (git@github.com:...)"
+        enforcement: "policy: remote protocol = SSH"
+        status: "implemented"
+      - id: "Art32-03"
+        description: "Vulnerability scanning on all PRs"
+        evidence: "dependency_scan + sast gates"
+        enforcement: "CI: compliance-gates.yml"
+        status: "implemented"
+      - id: "Art32-04"
+        description: "Signed commits ensure integrity and non-repudiation"
+        evidence: "require_signed_commits = true"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+
+  Art33:
+    title: "Notification of personal data breach"
+    controls:
+      - id: "Art33-01"
+        description: "Incident response procedures documented"
+        evidence: "jol-incident-response repository"
+        enforcement: "Manual review"
+        status: "implemented"
+      - id: "Art33-02"
+        description: "Secret exposure detected automatically via push protection"
+        evidence: "secret_scanning_push_protection enabled"
+        enforcement: "terraform: security_and_analysis"
+        status: "implemented"
+      - id: "Art33-03"
+        description: "72-hour breach notification process defined"
+        evidence: "jol-incident-response runbooks"
+        enforcement: "Manual review"
+        status: "implemented"
+
+  Art35:
+    title: "Data Protection Impact Assessment (DPIA)"
+    controls:
+      - id: "Art35-01"
+        description: "DPIAs conducted for high-risk processing"
+        evidence: "jol-privacy repository — DPIA records"
+        enforcement: "Manual review"
+        status: "implemented"
+
+  Art44:
+    title: "International data transfers"
+    controls:
+      - id: "Art44-01"
+        description: "GitHub (US-based) covered by EU-US Data Privacy Framework"
+        evidence: "GitHub DPA and EU-US DPF certification"
+        enforcement: "Legal review"
+        status: "accepted"
+      - id: "Art44-02"
+        description: "Terraform state stored in eu-central-1 (Frankfurt)"
+        evidence: "backend 's3' { region = 'eu-central-1' }"
+        enforcement: "terraform: main.tf"
+        status: "implemented"

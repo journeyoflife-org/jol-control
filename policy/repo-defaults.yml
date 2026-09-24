@@ -1,0 +1,129 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# JOL Repository Defaults — enforced baseline for EVERY repository
+# ──────────────────────────────────────────────────────────────────────────────
+# Owner:      journeyoflife-org/platform-admins
+# Compliance: SOC 2 Type II · GDPR · ISO 27001:2022 · PCI-DSS 4.0
+# Review:     Quarterly or on material change
+# ──────────────────────────────────────────────────────────────────────────────
+
+metadata:
+  version: "1.0.0"
+  last_reviewed: "2026-09-24"
+  next_review: "2026-12-24"
+  owner: "platform-admins"
+  approved_by: "Gintaras Kazlauskas"
+
+# ── Repository-level settings applied to ALL repos ──────────────────────────
+repository_defaults:
+  license: "MIT"
+  has_issues: true
+  has_wiki: false
+  has_projects: false
+  delete_branch_on_merge: true
+  allow_merge_commit: false          # squash-only to keep linear history
+  allow_squash_merge: true
+  allow_rebase_merge: true
+  auto_init: false
+  archived: false
+  vulnerability_alerts: true
+  secret_scanning: true              # GitHub Advanced Security
+  secret_scanning_push_protection: true
+  dependabot_alerts: true
+  dependabot_security_updates: true
+
+# ── Branch protection — main branch (applies to ALL repos) ──────────────────
+branch_protection:
+  main:
+    required_status_checks:
+      strict: true
+      minimum_contexts:
+        - "ci / lint"
+        - "ci / test"
+    required_pull_request_reviews:
+      required_approving_review_count: 1
+      dismiss_stale_reviews: true
+      require_code_owner_reviews: false
+      require_last_push_approval: true
+      dismissal_restrictions:
+        - "platform-admins"
+    enforce_admins: true
+    restrict_pushes: true
+    allowed_push_teams:
+      - "platform-admins"
+    require_signed_commits: true
+    require_linear_history: true
+    block_force_pushes: true
+    block_deletions: true
+    tag_protection:
+      pattern: "v*"
+
+# ── Required CI checks (minimum set for ALL repos) ──────────────────────────
+required_checks:
+  pre_merge:
+    - context: "ci / lint"
+      description: "Static analysis / linting must pass"
+    - context: "ci / test"
+      description: "Unit + integration tests must pass"
+    - context: "codeql-analysis"
+      description: "CodeQL SAST scan — no critical/high findings"
+    - context: "dependency-review"
+      description: "No known-vulnerable dependencies introduced"
+  post_merge:
+    - context: "compliance-scan / validate"
+      description: "Policy allow-list validation"
+    - context: "license-check"
+      description: "License compatibility scan"
+
+# ── Team access defaults ────────────────────────────────────────────────────
+teams:
+  platform-admins:
+    permission: "admin"
+    description: "Full administrative access — break-glass only"
+  developers:
+    permission: "push"
+    description: "Day-to-day development across platform repos"
+  auditors:
+    permission: "pull"
+    description: "Read-only access for compliance auditors and reviewers"
+  security:
+    permission: "push"
+    description: "Security team — can merge to any repo for incident response"
+
+# ── Data handling ────────────────────────────────────────────────────────────
+data_handling:
+  classification_required: true
+  max_classification_for_public: "public"
+  secrets_in_git: "prohibited"
+  required_gitignore_patterns:
+    - "*.pem"
+    - "*.key"
+    - "*.p12"
+    - "secrets.json"
+    - "credentials.json"
+    - ".env"
+    - ".env.*"
+    - "terraform.tfstate"
+    - "terraform.tfstate.*"
+    - ".terraform/"
+
+# ── Compliance framework mapping ─────────────────────────────────────────────
+compliance_mapping:
+  soc2:
+    CC6_1: "Branch protection + required reviews"
+    CC6_2: "Signed commits enforced"
+    CC6_3: "Secret scanning + push protection"
+    CC7_1: "Dependency scanning on every PR"
+    CC7_2: "CodeQL SAST on every PR"
+    CC8_1: "Change management via PR + audit trail"
+  gdpr:
+    Art25: "Data classification required per repo"
+    Art30: "Processing records in jol-privacy"
+    Art32: "Security gates enforced via CI"
+    Art33: "Incident response in jol-incident-response"
+  iso27001:
+    A_5_1: "Policy baselines in policy/"
+    A_5_10: "Acceptable use — no secrets in git"
+    A_6_1: "Team access controls per repo"
+    A_6_6: "Signed commits for access control"
+    A_7_1: "Branch protection rules"
+    A_8_1: "Secret scanning + dependency review"

@@ -1,0 +1,148 @@
+name: "Terraform Apply"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "repos/**"
+      - "policy/**"
+      - "*.tf"
+      - "*.tfvars"
+      - ".github/workflows/apply.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: "terraform-apply"
+  cancel-in-progress: false
+
+env:
+  TF_LOG: "INFO"
+  TF_INPUT: "0"
+
+jobs:
+  # ── Stage 1: Dev validation ──────────────────────────────────────────────
+  dev-validate:
+    name: "Dev — Validate"
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Validate YAML
+        run: python3 scripts/validate_repos.py
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan (dev)
+        run: |
+          terraform plan -input=false -no-color -out=tfplan \
+            -var="environment=dev"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # ── Stage 2: Staging apply ───────────────────────────────────────────────
+  staging-apply:
+    name: "Staging — Apply"
+    needs: dev-validate
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Plan (staging)
+        run: |
+          terraform plan -input=false -no-color -out=tfplan \
+            -var="environment=staging"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Apply (staging)
+        run: terraform apply -input=false -auto-approve tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # ── Stage 3: Production apply (requires manual approval) ─────────────────
+  prod-apply:
+    name: "Production — Apply"
+    needs: staging-apply
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://github.com/orgs/journeyoflife-org/repositories
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Plan (production)
+        run: |
+          terraform plan -input=false -no-color -out=tfplan \
+            -var="environment=prod"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Apply (production)
+        run: terraform apply -input=false -auto-approve tfplan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Post-apply compliance snapshot
+        run: |
+          python3 scripts/compliance_check.py --output compliance-snapshot.json
+          echo "Compliance snapshot generated."
+
+      - name: Drift detection
+        run: |
+          python3 scripts/drift_detect.py
+          echo "Drift detection complete."

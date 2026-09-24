@@ -1,0 +1,153 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ISO 27001:2022 — Annex A Controls Checklist
+# ──────────────────────────────────────────────────────────────────────────────
+# Mapped to jol-control enforcement points.
+# Review cadence: Quarterly
+# Last reviewed: 2026-09-24
+# ──────────────────────────────────────────────────────────────────────────────
+
+framework: "ISO 27001:2022"
+version: "Annex A Controls"
+owner: "platform-admins"
+
+annex_a_controls:
+  A.5.1:
+    title: "Policies for information security"
+    controls:
+      - id: "A.5.1-01"
+        description: "Repository defaults define security baseline"
+        evidence: "policy/repo-defaults.yml"
+        enforcement: "terraform + CI validation"
+        status: "implemented"
+      - id: "A.5.1-02"
+        description: "Compliance gates define mandatory security checks"
+        evidence: "policy/compliance-gates.yml"
+        enforcement: "CI: compliance-scan workflow"
+        status: "implemented"
+      - id: "A.5.1-03"
+        description: "Policy documents reviewed quarterly"
+        evidence: "metadata.next_review in policy files"
+        enforcement: "scripts/validate_repos.py"
+        status: "implemented"
+
+  A.5.10:
+    title: "Acceptable use of information and other associated assets"
+    controls:
+      - id: "A.5.10-01"
+        description: "No secrets in git — enforced via gitignore patterns"
+        evidence: "policy/repo-defaults.yml data_handling.required_gitignore_patterns"
+        enforcement: "CI: secret_scan gate"
+        status: "implemented"
+      - id: "A.5.10-02"
+        description: "License compliance enforced — denied licenses blocked"
+        evidence: "policy/compliance-gates.yml license_check"
+        enforcement: "CI: license_check gate"
+        status: "implemented"
+
+  A.6.1:
+    title: "Information security roles and responsibilities"
+    controls:
+      - id: "A.6.1-01"
+        description: "Team-based access control with defined roles"
+        evidence: "platform-admins, developers, auditors, security teams"
+        enforcement: "terraform: github_team_repository"
+        status: "implemented"
+      - id: "A.6.1-02"
+        description: "Admins enforce break-glass access only"
+        evidence: "platform-admins: admin only on governance repos"
+        enforcement: "terraform: team assignments"
+        status: "implemented"
+
+  A.6.6:
+    title: "Access control for network and network services"
+    controls:
+      - id: "A.6.6-01"
+        description: "SSH-only git access (no HTTPS credentials)"
+        evidence: "Remote URLs: git@github.com:journeyoflife-org/*.git"
+        enforcement: "policy: remote protocol = SSH"
+        status: "implemented"
+      - id: "A.6.6-02"
+        description: "Signed commits required — GPG/SSH key authentication"
+        evidence: "require_signed_commits = true"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+
+  A.7.1:
+    title: "Physical and environmental security (user authentication)"
+    controls:
+      - id: "A.7.1-01"
+        description: "GitHub enforces MFA for all organization members"
+        evidence: "GitHub org setting: require 2FA"
+        enforcement: "GitHub org settings (manual)"
+        status: "implemented"
+      - id: "A.7.1-02"
+        description: "Branch protection prevents unauthorized code changes"
+        evidence: "All repos have branch protection on main"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+
+  A.8.1:
+    title: "Inventory of information and other associated assets"
+    controls:
+      - id: "A.8.1-01"
+        description: "Complete inventory of all repositories in repos/*.yml"
+        evidence: "40 repo YAML files in repos/ directory"
+        enforcement: "scripts/validate_repos.py — allow-list check"
+        status: "implemented"
+      - id: "A.8.1-02"
+        description: "Each repo classified by tier and data classification"
+        evidence: "repos/*.yml tier + compliance.data_classification"
+        enforcement: "scripts/validate_repos.py"
+        status: "implemented"
+
+  A.8.8:
+    title: "Management of technical vulnerabilities"
+    controls:
+      - id: "A.8.8-01"
+        description: "Dependency vulnerability scanning on every PR"
+        evidence: "dependency_scan gate"
+        enforcement: "CI: dependency-review action"
+        status: "implemented"
+      - id: "A.8.8-02"
+        description: "SAST (CodeQL) on every PR and push"
+        evidence: "sast gate"
+        enforcement: "CI: codeql-analysis"
+        status: "implemented"
+      - id: "A.8.8-03"
+        description: "Container image scanning for platform/devops repos"
+        evidence: "container_scan gate"
+        enforcement: "CI: trivy"
+        status: "implemented"
+      - id: "A.8.8-04"
+        description: "IaC security scanning for Terraform/K8s/Docker"
+        evidence: "iac_scan gate"
+        enforcement: "CI: checkov/tflint/trivy"
+        status: "implemented"
+
+  A.8.19:
+    title: "Security of network services"
+    controls:
+      - id: "A.8.19-01"
+        description: "Dependabot security updates enabled on all repos"
+        evidence: "dependabot_alerts enabled"
+        enforcement: "terraform: security_and_analysis"
+        status: "implemented"
+
+  A.8.25:
+    title: "Secure development lifecycle"
+    controls:
+      - id: "A.8.25-01"
+        description: "Code quality gates enforced (lint, test, type-check)"
+        evidence: "code_quality gate"
+        enforcement: "CI: ruff/mypy/eslint/tsc"
+        status: "implemented"
+      - id: "A.8.25-02"
+        description: "Test coverage minimum 80%"
+        evidence: "code_quality gate: pytest --cov-fail-under=80"
+        enforcement: "CI: code_quality gate"
+        status: "implemented"
+      - id: "A.8.25-03"
+        description: "Linear git history enforced"
+        evidence: "require_linear_history = true"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"

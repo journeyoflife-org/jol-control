@@ -1,0 +1,116 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# SOC 2 Type II — Trust Service Criteria Checklist
+# ──────────────────────────────────────────────────────────────────────────────
+# Mapped to jol-control enforcement points.
+# Review cadence: Quarterly
+# Last reviewed: 2026-09-24
+# ──────────────────────────────────────────────────────────────────────────────
+
+framework: "SOC 2 Type II"
+version: "2017 Trust Services Criteria"
+owner: "platform-admins"
+
+trust_service_criteria:
+  CC6.1:
+    title: "Logical and Physical Access Controls"
+    controls:
+      - id: "CC6.1-01"
+        description: "GitHub organization access is restricted to authorized personnel"
+        evidence: "Team membership in platform-admins, developers, auditors, security"
+        enforcement: "terraform: github_team_repository"
+        status: "implemented"
+      - id: "CC6.1-02"
+        description: "Branch protection prevents unauthorized direct pushes to main"
+        evidence: "github_branch_protection resources with enforce_admins=true"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+      - id: "CC6.1-03"
+        description: "Signed commits required for all changes"
+        evidence: "require_signed_commits = true on all branch protection rules"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+
+  CC6.2:
+    title: "System Boundaries & Credential Management"
+    controls:
+      - id: "CC6.2-01"
+        description: "Secret scanning prevents credentials from entering git"
+        evidence: "GitHub Secret Scanning + Push Protection enabled on all repos"
+        enforcement: "terraform: security_and_analysis block"
+        status: "implemented"
+      - id: "CC6.2-02"
+        description: "No secrets stored in Terraform state or variable files"
+        evidence: "terraform.tfvars contains no secrets; CI uses env vars"
+        enforcement: "policy: data_handling.secrets_in_git = prohibited"
+        status: "implemented"
+
+  CC6.3:
+    title: "Data Protection"
+    controls:
+      - id: "CC6.3-01"
+        description: "Data classification required for every repository"
+        evidence: "repos/*.yml compliance.data_classification field"
+        enforcement: "scripts/validate_repos.py"
+        status: "implemented"
+      - id: "CC6.3-02"
+        description: "Terraform state encrypted at rest (S3 SSE)"
+        evidence: "backend 's3' { encrypt = true }"
+        enforcement: "terraform: main.tf backend config"
+        status: "implemented"
+
+  CC7.1:
+    title: "System Operations — Monitoring"
+    controls:
+      - id: "CC7.1-01"
+        description: "Dependency vulnerability scanning on every PR"
+        evidence: "dependency-review gate in compliance-gates.yml"
+        enforcement: "CI: dependency_scan gate"
+        status: "implemented"
+      - id: "CC7.1-02"
+        description: "SAST (CodeQL) on every PR and push to main"
+        evidence: "sast gate in compliance-gates.yml"
+        enforcement: "CI: sast gate"
+        status: "implemented"
+      - id: "CC7.1-03"
+        description: "IaC security scanning (Checkov/Trivy) on every PR"
+        evidence: "iac_scan gate in compliance-gates.yml"
+        enforcement: "CI: iac_scan gate"
+        status: "implemented"
+
+  CC7.2:
+    title: "System Operations — Incident Response"
+    controls:
+      - id: "CC7.2-01"
+        description: "Incident response runbooks documented"
+        evidence: "jol-incident-response repository"
+        enforcement: "Manual review"
+        status: "implemented"
+      - id: "CC7.2-02"
+        description: "Secret exposure triggers immediate rotation"
+        evidence: "secret_scan gate remediation steps"
+        enforcement: "policy: compliance-gates.yml secret_scan.remediation"
+        status: "implemented"
+
+  CC8.1:
+    title: "Change Management"
+    controls:
+      - id: "CC8.1-01"
+        description: "All changes require pull request with approvals"
+        evidence: "Branch protection: required_pull_request_reviews"
+        enforcement: "terraform: github_branch_protection"
+        status: "implemented"
+      - id: "CC8.1-02"
+        description: "Changes to governance repos require 2 approvals + CODEOWNERS"
+        evidence: "governance tier branch protection"
+        enforcement: "terraform: github_branch_protection.governance"
+        status: "implemented"
+      - id: "CC8.1-03"
+        description: "Terraform plan posted as PR comment for review"
+        evidence: ".github/workflows/plan.yml"
+        enforcement: "CI: plan workflow"
+        status: "implemented"
+      - id: "CC8.1-04"
+        description: "Production apply requires manual environment approval"
+        evidence: "GitHub environment 'production' with required reviewers"
+        enforcement: "CI: apply.yml prod-apply job"
+        status: "implemented"
