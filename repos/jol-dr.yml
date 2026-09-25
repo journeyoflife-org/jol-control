@@ -4,7 +4,7 @@
 
 name: jol-dr
 description: Disaster recovery plans, RTO/RPO targets, backup strategies, and business continuity procedures.
-visibility: public
+visibility: private
 tier: governance
 language: YAML
 topics:

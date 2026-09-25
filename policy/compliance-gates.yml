@@ -160,6 +160,39 @@ gates:
         - "deny security groups with 0.0.0.0/0 ingress on sensitive ports"
       run_on: ["pull_request"]
 
+
+  backup_freshness:
+    id: "backup-freshness-check"
+    description: "Fail if backups are stale beyond RPO threshold"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "iso27001"]
+    soc2_controls: ["A1.2", "A1.3"]
+    iso_controls: ["A.5.29", "A.8.13"]
+    implementation:
+      tool: "jol-dr/scripts/verify-backups.sh"
+      schedule: "daily"
+      run_on: ["schedule"]
+    remediation:
+      - "Investigate backup failure"
+      - "Restore backup schedule"
+      - "Document incident in jol-incident-response"
+
+  rehearsal_schedule:
+    id: "rehearsal-schedule-check"
+    description: "Fail if DR rehearsal is overdue per schedule"
+    enforcement: "mandatory"
+    frameworks: ["soc2", "iso27001"]
+    soc2_controls: ["A1.3"]
+    iso_controls: ["A.5.29", "A.5.30"]
+    implementation:
+      tool: "jol-dr/rehearsals/STATUS.md"
+      schedule: "weekly"
+      run_on: ["schedule"]
+    remediation:
+      - "Schedule and perform DR rehearsal"
+      - "Document results in jol-dr/rehearsals/records/"
+      - "Update runbooks based on lessons learned"
+
 enforcement_matrix:
   governance:
     required: ["dependency_scan", "secret_scan", "license_check", "code_quality", "sast", "iac_scan", "iac_policy"]

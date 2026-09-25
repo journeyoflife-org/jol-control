@@ -53,10 +53,10 @@ trust_service_criteria:
         enforcement: "scripts/validate_repos.py"
         status: "implemented"
       - id: "CC6.3-02"
-        description: "Terraform state encrypted at rest (S3 SSE)"
-        evidence: "backend 's3' { encrypt = true }"
+        description: "Terraform state stored locally (terraform.tfstate)"
+        evidence: "main.tf (no backend block); state is local plaintext"
         enforcement: "terraform: main.tf backend config"
-        status: "implemented"
+        status: "not_encrypted"
 
   CC7.1:
     title: "System Operations — Monitoring"
@@ -113,4 +113,64 @@ trust_service_criteria:
         description: "Production apply requires manual environment approval"
         evidence: "GitHub environment 'production' with required reviewers"
         enforcement: "CI: apply.yml prod-apply job"
+        status: "implemented"
+
+  A1.1:
+    title: "Capacity Planning"
+    controls:
+      - id: "A1.1-01"
+        description: "Service inventory with criticality tiers"
+        evidence: "jol-dr/registers/service-inventory.yml"
+        enforcement: "jol-dr: register review"
+        status: "implemented"
+
+  A1.2:
+    title: "Backup Processes and Recovery Infrastructure"
+    controls:
+      - id: "A1.2-01"
+        description: "Backup policy documented"
+        evidence: "jol-dr/policy/backup-policy.md"
+        enforcement: "jol-dr: policy review"
+        status: "implemented"
+      - id: "A1.2-02"
+        description: "Backup schedule enforced"
+        evidence: "jol-dr/registers/backup-schedule.yml, jol-dr/scripts/verify-backups.sh"
+        enforcement: "jol-dr: backup_freshness gate"
+        status: "not_verified"
+      - id: "A1.2-03"
+        description: "Recovery infrastructure tested"
+        evidence: "jol-dr/rehearsals/records/"
+        enforcement: "jol-dr: rehearsal_schedule gate"
+        status: "not_tested"
+
+  A1.3:
+    title: "Recovery Plan Testing"
+    controls:
+      - id: "A1.3-01"
+        description: "Rehearsal schedule defined"
+        evidence: "jol-dr/rehearsals/schedule.yml"
+        enforcement: "jol-dr: rehearsal_schedule gate"
+        status: "implemented"
+      - id: "A1.3-02"
+        description: "Rehearsals performed per schedule"
+        evidence: "jol-dr/rehearsals/records/"
+        enforcement: "jol-dr: rehearsal_schedule gate"
+        status: "not_tested"
+
+  A1.4:
+    title: "Effects of System Changes During Recovery"
+    controls:
+      - id: "A1.4-01"
+        description: "DR plan includes verification phase"
+        evidence: "jol-dr/plans/disaster-recovery-plan.md Phase 4"
+        enforcement: "jol-dr: plan review"
+        status: "implemented"
+
+  A1.5:
+    title: "System Inventory for Disaster Recovery"
+    controls:
+      - id: "A1.5-01"
+        description: "Service inventory with recovery order"
+        evidence: "jol-dr/registers/service-inventory.yml, jol-dr/registers/recovery-order.yml"
+        enforcement: "jol-dr: register review"
         status: "implemented"
