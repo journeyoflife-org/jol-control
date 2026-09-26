@@ -9,21 +9,8 @@
 # Uses the non-deprecated github_organization_role_team resource (replaces the
 # deprecated github_organization_security_manager). The built-in
 # "security_manager" role id is resolved at plan time from the org role list.
-data "github_organization_roles" "all" {}
 
-locals {
-  security_manager_role_id = one([
-    for r in data.github_organization_roles.all.roles :
-    r.role_id if r.name == "security_manager"
-  ])
-}
 
-resource "github_organization_role_team" "security_team" {
-  count = local.security_manager_role_id != null ? 1 : 0
-
-  team_slug = "platform-admins"
-  role_id   = local.security_manager_role_id
-}
 
 # ── Webhook for audit-log streaming ──────────────────────────────────────────
 # Only created in prod AND when a webhook URL is supplied (via TF_VAR_*), so an

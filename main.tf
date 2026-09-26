@@ -27,11 +27,3 @@ provider "github" {
   # token is read from GITHUB_TOKEN env var — NEVER hardcode
 }
 
-# ── Data sources ─────────────────────────────────────────────────────────────
-data "github_organization" "jol" {
-  name = var.github_org
-}
-
-data "github_team" "security" {
-  slug = "security"
-}

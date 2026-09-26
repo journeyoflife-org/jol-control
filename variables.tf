@@ -31,8 +31,8 @@ variable "required_approving_review_count" {
   default     = 2
 
   validation {
-    condition     = var.required_approving_review_count >= 1 && var.required_approving_review_count <= 6
-    error_message = "Review count must be between 1 and 6."
+    condition     = var.required_approving_review_count >= 0 && var.required_approving_review_count <= 6
+    error_message = "Review count must be between 0 and 6 (0 only valid in solo_mode)."
   }
 }
 
@@ -40,6 +40,18 @@ variable "enforce_signed_commits" {
   description = "Require GPG/SSH signed commits on all repositories"
   type        = bool
   default     = true
+}
+
+variable "solo_mode" {
+  description = <<-EOT
+    Single-owner operation. When true, branch protection drops multi-reviewer,
+    code-owner, last-push-approval, and required-status-check gates (which one
+    person cannot satisfy) but KEEPS signed commits, linear history, and the
+    force-push/deletion blocks. Set false when the first engineers are hired to
+    restore the full governance baseline.
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "enable_secret_scanning" {

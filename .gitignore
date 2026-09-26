@@ -71,3 +71,6 @@ compliance-snapshot.json
 
 # Ruff cache
 .ruff_cache/
+
+# Foreign project artifacts (jolarca-dev org)
+.jolarca-staging/

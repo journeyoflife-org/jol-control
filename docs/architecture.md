@@ -86,9 +86,11 @@ declarative policy definitions, and automated compliance gates.
 
 ## State Management
 
-- Terraform state stored in S3 (`eu-central-1`) with encryption at rest
-- DynamoDB table for state locking (prevents concurrent applies)
-- State file contains sensitive data — access restricted to platform-admins
+- Terraform state stored **locally** in `terraform.tfstate` on the control plane host
+- No remote backend configured (no S3, no DynamoDB, no locking)
+- State file is gitignored (never committed to version control)
+- **Risk**: Host loss = inability to reason about repository ownership; concurrent applies may corrupt state
+- **Mitigation plan**: Migrate to HCP Terraform (free tier) for remote state, locking, and versioning — see ADR-0006 in jolarca-control for reference architecture
 
 ## Team Access
 

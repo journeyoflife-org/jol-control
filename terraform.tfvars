@@ -9,9 +9,14 @@ environment                     = "prod"
 default_license                 = "mit"
 required_approving_review_count = 2
 enforce_signed_commits          = true
-enable_secret_scanning          = true
-enable_dependabot               = true
-repo_definitions_dir            = "repos"
+
+# Single-owner operation: relax multi-reviewer/code-owner/status-check gates
+# (which one person cannot satisfy) while keeping signed commits, linear
+# history, and force-push/deletion blocks. Set false when hiring begins.
+solo_mode              = true
+enable_secret_scanning = true
+enable_dependabot      = true
+repo_definitions_dir   = "repos"
 
 compliance_frameworks = ["soc2", "gdpr", "iso27001", "pci-dss"]
 

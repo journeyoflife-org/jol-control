@@ -38,7 +38,6 @@ resource "github_repository" "repo" {
   archived               = lookup(each.value.settings, "archived", false)
   auto_init              = lookup(each.value.settings, "auto_init", false)
   is_template            = lookup(each.value.settings, "is_template", false)
-  vulnerability_alerts   = lookup(each.value.settings, "vulnerability_alerts", true)
 
   # Security
   security_and_analysis {
@@ -67,4 +66,12 @@ resource "github_repository" "repo" {
     prevent_destroy = true # never accidentally delete a repo
     ignore_changes  = [auto_init]
   }
+}
+
+# ── Vulnerability alerts (separate resource — inline arg deprecated) ─────────
+resource "github_repository_vulnerability_alerts" "repo" {
+  for_each = local.repo_defs
+
+  repository = github_repository.repo[each.key].name
+  enabled    = lookup(each.value.settings, "vulnerability_alerts", true)
 }
