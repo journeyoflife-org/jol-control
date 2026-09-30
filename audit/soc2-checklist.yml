@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Mapped to jol-control enforcement points.
 # Review cadence: Quarterly
-# Last reviewed: 2026-09-24
+# Last reviewed: 2026-09-30
 # ──────────────────────────────────────────────────────────────────────────────
 
 framework: "SOC 2 Type II"
@@ -16,9 +16,9 @@ trust_service_criteria:
     controls:
       - id: "CC6.1-01"
         description: "GitHub organization access is restricted to authorized personnel"
-        evidence: "Team membership in platform-admins, developers, auditors, security"
-        enforcement: "terraform: github_team_repository"
-        status: "implemented"
+        evidence: "NONE — teams referenced in repos/*.yml (platform-admins, developers, auditors) do not exist. Existing teams: backend, data, devops, frontend, security. No team-repository bindings enforced."
+        enforcement: "terraform: github_team_repository — NOT ENFORCED (teams do not exist)"
+        status: "not_implemented"
       - id: "CC6.1-02"
         description: "Branch protection prevents unauthorized direct pushes to main"
         evidence: "github_branch_protection resources with enforce_admins=true"
@@ -63,19 +63,19 @@ trust_service_criteria:
     controls:
       - id: "CC7.1-01"
         description: "Dependency vulnerability scanning on every PR"
-        evidence: "dependency-review gate in compliance-gates.yml"
-        enforcement: "CI: dependency_scan gate"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml does not run dependency-review action. Dependabot alerts enabled on all repos, but no PR gate."
+        enforcement: "CI: dependency_scan gate — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "CC7.1-02"
         description: "SAST (CodeQL) on every PR and push to main"
-        evidence: "sast gate in compliance-gates.yml"
-        enforcement: "CI: sast gate"
-        status: "implemented"
+        evidence: "NONE — CodeQL not running. Verified via code-scanning/analyses API: 'no analysis found' on jol-control. compliance-scan.yml does not run CodeQL."
+        enforcement: "CI: sast gate — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "CC7.1-03"
         description: "IaC security scanning (Checkov/Trivy) on every PR"
-        evidence: "iac_scan gate in compliance-gates.yml"
-        enforcement: "CI: iac_scan gate"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml runs grep for secret patterns only. No Checkov, Trivy, tflint, or conftest in CI."
+        enforcement: "CI: iac_scan gate — NOT IMPLEMENTED"
+        status: "not_implemented"
 
   CC7.2:
     title: "System Operations — Incident Response"
@@ -96,14 +96,14 @@ trust_service_criteria:
     controls:
       - id: "CC8.1-01"
         description: "All changes require pull request with approvals"
-        evidence: "Branch protection: required_pull_request_reviews"
-        enforcement: "terraform: github_branch_protection"
-        status: "implemented"
+        evidence: "NONE — solo_mode=true drops required_pull_request_reviews entirely from branch protection. Branch protection keeps only: enforce_admins, signed commits, linear history, no force push."
+        enforcement: "terraform: github_branch_protection — review requirement OMITTED in solo_mode"
+        status: "not_implemented"
       - id: "CC8.1-02"
         description: "Changes to governance repos require 2 approvals + CODEOWNERS"
-        evidence: "governance tier branch protection"
-        enforcement: "terraform: github_branch_protection.governance"
-        status: "implemented"
+        evidence: "NONE — solo_mode=true drops required_pull_request_reviews for both governance and standard tiers. 2-approver rule unsatisfiable (org has 2 members total)."
+        enforcement: "terraform: github_branch_protection.governance — review requirement OMITTED in solo_mode"
+        status: "not_implemented"
       - id: "CC8.1-03"
         description: "Terraform plan posted as PR comment for review"
         evidence: ".github/workflows/plan.yml"

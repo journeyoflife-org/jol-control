@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Mapped to jol-control enforcement points.
 # Review cadence: Quarterly
-# Last reviewed: 2026-09-24
+# Last reviewed: 2026-09-30
 # ──────────────────────────────────────────────────────────────────────────────
 
 framework: "ISO 27001:2022"
@@ -49,14 +49,14 @@ annex_a_controls:
     controls:
       - id: "A.6.1-01"
         description: "Team-based access control with defined roles"
-        evidence: "platform-admins, developers, auditors, security teams"
-        enforcement: "terraform: github_team_repository"
-        status: "implemented"
+        evidence: "NONE — teams referenced in repos/*.yml (platform-admins, developers, auditors) do not exist. Existing teams: backend, data, devops, frontend, security. No team-repository bindings enforced."
+        enforcement: "terraform: github_team_repository — NOT ENFORCED (teams do not exist)"
+        status: "not_implemented"
       - id: "A.6.1-02"
         description: "Admins enforce break-glass access only"
-        evidence: "platform-admins: admin only on governance repos"
-        enforcement: "terraform: team assignments"
-        status: "implemented"
+        evidence: "NONE — platform-admins team does not exist. No team-based admin restrictions enforced."
+        enforcement: "terraform: team assignments — NOT ENFORCED (team does not exist)"
+        status: "not_implemented"
 
   A.6.6:
     title: "Access control for network and network services"
@@ -77,14 +77,14 @@ annex_a_controls:
     controls:
       - id: "A.7.1-01"
         description: "GitHub enforces MFA for all organization members"
-        evidence: "GitHub org setting: require 2FA"
-        enforcement: "GitHub org settings (manual)"
+        evidence: "GitHub org setting: two_factor_requirement_enabled = true (verified via API)"
+        enforcement: "GitHub org settings"
         status: "implemented"
       - id: "A.7.1-02"
         description: "Branch protection prevents unauthorized code changes"
-        evidence: "All repos have branch protection on main"
-        enforcement: "terraform: github_branch_protection"
-        status: "implemented"
+        evidence: "PARTIAL — solo_mode=true drops required_pull_request_reviews. Branch protection keeps: enforce_admins, signed commits, linear history, no force push. Direct pushes allowed."
+        enforcement: "terraform: github_branch_protection — review requirement OMITTED in solo_mode"
+        status: "partially_implemented"
 
   A.8.1:
     title: "Inventory of information and other associated assets"
@@ -110,19 +110,19 @@ annex_a_controls:
         status: "implemented"
       - id: "A.8.8-02"
         description: "SAST (CodeQL) on every PR and push"
-        evidence: "sast gate"
-        enforcement: "CI: codeql-analysis"
-        status: "implemented"
+        evidence: "NONE — CodeQL not running. Verified via code-scanning/analyses API: 'no analysis found' on jol-control. compliance-scan.yml does not run CodeQL."
+        enforcement: "CI: codeql-analysis — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "A.8.8-03"
         description: "Container image scanning for platform/devops repos"
-        evidence: "container_scan gate"
-        enforcement: "CI: trivy"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml does not run container scanning. No Trivy or similar tool in CI."
+        enforcement: "CI: trivy — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "A.8.8-04"
         description: "IaC security scanning for Terraform/K8s/Docker"
-        evidence: "iac_scan gate"
-        enforcement: "CI: checkov/tflint/trivy"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml runs grep for secret patterns only. No Checkov, Trivy, tflint in CI."
+        enforcement: "CI: checkov/tflint/trivy — NOT IMPLEMENTED"
+        status: "not_implemented"
 
   A.8.19:
     title: "Security of network services"
@@ -138,14 +138,14 @@ annex_a_controls:
     controls:
       - id: "A.8.25-01"
         description: "Code quality gates enforced (lint, test, type-check)"
-        evidence: "code_quality gate"
-        enforcement: "CI: ruff/mypy/eslint/tsc"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml does not run ruff, mypy, eslint, or tsc. No code quality gate in CI."
+        enforcement: "CI: ruff/mypy/eslint/tsc — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "A.8.25-02"
         description: "Test coverage minimum 80%"
-        evidence: "code_quality gate: pytest --cov-fail-under=80"
-        enforcement: "CI: code_quality gate"
-        status: "implemented"
+        evidence: "NONE — compliance-scan.yml does not run pytest or enforce coverage. No test coverage gate in CI."
+        enforcement: "CI: code_quality gate — NOT IMPLEMENTED"
+        status: "not_implemented"
       - id: "A.8.25-03"
         description: "Linear git history enforced"
         evidence: "require_linear_history = true"

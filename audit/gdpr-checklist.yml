@@ -4,7 +4,7 @@
 # Mapped to jol-control enforcement points.
 # Platform: 400K websites, 27 EU member states
 # Review cadence: Quarterly
-# Last reviewed: 2026-09-24
+# Last reviewed: 2026-09-30
 # ──────────────────────────────────────────────────────────────────────────────
 
 framework: "GDPR"
@@ -60,9 +60,9 @@ articles:
     controls:
       - id: "Art32-01"
         description: "Access control via team-based permissions"
-        evidence: "github_team_repository resources"
-        enforcement: "terraform: team assignments"
-        status: "implemented"
+        evidence: "NONE — teams referenced in repos/*.yml (platform-admins, developers, auditors) do not exist. Existing teams: backend, data, devops, frontend, security. No team-repository bindings enforced."
+        enforcement: "terraform: team assignments — NOT ENFORCED (teams do not exist)"
+        status: "not_implemented"
       - id: "Art32-02"
         description: "Encryption in transit (HTTPS/SSH for all git operations)"
         evidence: "SSH remotes enforced (git@github.com:...)"
@@ -117,6 +117,6 @@ articles:
         status: "accepted"
       - id: "Art44-02"
         description: "Terraform state stored in eu-central-1 (Frankfurt)"
-        evidence: "backend 's3' { region = 'eu-central-1' }"
-        enforcement: "terraform: main.tf"
-        status: "implemented"
+        evidence: "NONE — state is LOCAL to control-plane host (gitignored). main.tf has no backend block. RA-03 risk acceptance documented."
+        enforcement: "terraform: main.tf backend config — LOCAL STATE (not S3)"
+        status: "not_implemented"
