@@ -24,9 +24,10 @@ human explicitly asks in the current session.
 |---|---|---|
 | "2 reviewers + CODEOWNERS protect main" | **Not enforced.** `solo_mode = true` | `terraform.tfvars:17`; `branch-protection.tf:39,53` omit the blocks |
 | "Squash-merge only" | **False.** Merge commits disabled, squash *and* rebase enabled | `allow_merge_commit=false`, `allow_squash_merge=true`, `allow_rebase_merge=true` |
-| "CI applies changes dev→staging→prod" | **Proven broken.** Both runs failed: empty-state plan `120 to add`, then `403 Resource not accessible by integration` | `apply.yml` run history; `main.tf:138-148`; state is local and gitignored |
+| "CI applies changes dev→staging→prod" | **Proven broken, now gated off.** Both runs failed (empty-state plan `120 to add`, then `403`). Apply jobs now require `vars.TF_REMOTE_STATE_ENABLED == 'true'` | `apply.yml` run history and job `if:` conditions; `main.tf:138-148` |
+| "Production apply requires manual approval" | **False.** No `production` environment exists; `dev` and `staging` have zero `protection_rules` | GitHub environments API; `audit/soc2-checklist.yml` CC8.1-04 is now `not_implemented` |
 | "Required checks ci / lint, ci / test, codeql-analysis" | **Not emitted by this repo.** GitHub reports bare job names here: `Dev — Validate`, `Staging — Apply`, `Production — Apply` | Live check-runs API; `.github/workflows/` holds only plan.yml, apply.yml, compliance-scan.yml |
-| "Plan-only, no apply authority" | **False.** `make apply` and `apply.yml` both apply | `Makefile` apply target; `apply.yml:84,117` |
+| "Plan-only, no apply authority" | **False locally.** `make apply` applies on this host (now behind `plan-gate`); only CI's apply jobs are gated off | `Makefile` apply target; `apply.yml` job `if:` conditions |
 | "Targeted applies (-target) are the convention" | **False.** No `-target` usage anywhere in this repo | grep across `*.tf`, `Makefile`, `*.yml` |
 
 Still genuinely enforced: signed commits, linear history, no force-push, no

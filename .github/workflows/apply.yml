@@ -1,5 +1,22 @@
 name: "Terraform Apply"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# STATUS: validation only. The apply jobs are DISABLED until remote state exists.
+#
+# Terraform state is local to the control-plane host (gitignored, no backend), so
+# a CI runner plans from an EMPTY state. Verified from this workflow's own run
+# history: the plan reported "120 to add, 0 to change, 0 to destroy" and the apply
+# then failed with "403 Resource not accessible by integration" on
+# POST /orgs/journeyoflife-org/repos, because the default GITHUB_TOKEN has no org
+# scope. prevent_destroy would NOT have stopped that plan — from an empty state
+# nothing is destroyed, everything is a create.
+#
+# To enable the apply jobs: provision remote state (HCP Terraform), supply an
+# org-scoped token, create the 'production' environment WITH required reviewers,
+# then set the repository variable TF_REMOTE_STATE_ENABLED=true. Each apply job
+# runs scripts/plan_gate.py before applying.
+# ──────────────────────────────────────────────────────────────────────────────
+
 on:
   push:
     branches: [main]
@@ -23,7 +40,7 @@ env:
   TF_INPUT: "0"
 
 jobs:
-  # ── Stage 1: Dev validation ──────────────────────────────────────────────
+  # ── Stage 1: Validation only — applies are gated off ──────────────────────
   dev-validate:
     name: "Dev — Validate"
     runs-on: ubuntu-latest
@@ -47,17 +64,28 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Plan (dev)
-        run: |
-          terraform plan -input=false -no-color -out=tfplan \
-            -var="environment=dev"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Plan Gate Self-Test (prove the gate is not inert)
+        run: python3 tests/test_plan_gate.py
 
-  # ── Stage 2: Staging apply ───────────────────────────────────────────────
+      - name: Record why no plan or apply runs in CI
+        run: |
+          {
+            echo "## Terraform Apply — validation only"
+            echo ""
+            echo "No plan and no apply runs here. State is local to the"
+            echo "control-plane host, so this runner would plan from an empty"
+            echo "state and propose to re-create all 40 repositories."
+            echo ""
+            echo "Apply jobs are gated behind TF_REMOTE_STATE_ENABLED (unset)."
+            echo "Authoritative path: make plan -> make plan-gate -> make apply"
+            echo "on the control-plane host."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Stage 2: Staging apply — DISABLED until remote state exists ───────────
   staging-apply:
     name: "Staging — Apply"
     needs: dev-validate
+    if: vars.TF_REMOTE_STATE_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: staging
 
@@ -80,15 +108,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Destroy / Replace Gate (STOP on destructive plan)
+        run: |
+          terraform show -json tfplan > tfplan.json
+          python3 scripts/plan_gate.py tfplan.json
+
       - name: Terraform Apply (staging)
         run: terraform apply -input=false -auto-approve tfplan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Stage 3: Production apply (requires manual approval) ─────────────────
+  # ── Stage 3: Production apply — DISABLED; no approval gate exists ─────────
+  # The 'production' environment does NOT exist (verified: only 'dev' and
+  # 'staging' are defined) and neither has protection_rules, so there is no
+  # manual approval gate today. Create the environment WITH required reviewers
+  # before enabling this job.
   prod-apply:
     name: "Production — Apply"
     needs: staging-apply
+    if: vars.TF_REMOTE_STATE_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -112,6 +150,11 @@ jobs:
             -var="environment=prod"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Destroy / Replace Gate (STOP on destructive plan)
+        run: |
+          terraform show -json tfplan > tfplan.json
+          python3 scripts/plan_gate.py tfplan.json
 
       - name: Terraform Apply (production)
         run: terraform apply -input=false -auto-approve tfplan

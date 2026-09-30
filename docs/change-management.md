@@ -43,7 +43,7 @@ policy baselines, and repository allow-list definitions.
 
 ## Approval Matrix
 
-| Change Type | Approvers | Environment Gate |
+| Change Type | Approvers | Environment Gate (target design) |
 |-------------|-----------|-----------------|
 | Add repo | 1 | Auto (dev → staging → prod) |
 | Remove repo | 2 | Manual prod approval |
@@ -59,6 +59,14 @@ policy baselines, and repository allow-list definitions.
 > and `prevent_destroy` on `github_repository` and `github_branch_protection`.
 > Set `solo_mode = false` when the first engineers are hired to restore the
 > matrix above.
+>
+> **Environment gate status:** none operates today. Verified via the GitHub
+> environments API: only `dev` and `staging` exist — there is **no `production`
+> environment** — and neither has any `protection_rules`, so no manual approval
+> gate is configured. `apply.yml`'s apply jobs are additionally gated off behind
+> `TF_REMOTE_STATE_ENABLED`, because a CI runner cannot reach the local state.
+> The "Environment Gate" column above is therefore a target design, not a live
+> control.
 
 ## Rollback Procedure
 1. Revert the PR that caused the issue

@@ -111,9 +111,9 @@ trust_service_criteria:
         status: "implemented"
       - id: "CC8.1-04"
         description: "Production apply requires manual environment approval"
-        evidence: "GitHub environment 'production' with required reviewers"
-        enforcement: "CI: apply.yml prod-apply job"
-        status: "implemented"
+        evidence: "NONE — verified via the GitHub environments API: no 'production' environment exists (only 'dev' and 'staging'), and neither has protection_rules"
+        enforcement: "CI: apply.yml prod-apply job — gated off behind vars.TF_REMOTE_STATE_ENABLED; CI cannot apply because state is local to the control-plane host"
+        status: "not_implemented"
 
   A1.1:
     title: "Capacity Planning"

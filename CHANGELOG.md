@@ -5,6 +5,30 @@ All notable changes to jol-control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-09-30
+
+### Changed
+- `apply.yml` no longer plans or applies in CI. `dev-validate` is now a
+  validation-only preflight (YAML validation, `terraform init`,
+  `terraform validate`, plan-gate self-test) and the misleading empty-state
+  `terraform plan` step was removed. `staging-apply` and `prod-apply` are gated
+  behind `vars.TF_REMOTE_STATE_ENABLED == 'true'`, and each now runs
+  `scripts/plan_gate.py` before applying
+- `docs/change-management.md`: the Approval Matrix "Environment Gate" column is
+  labelled target design, with the verified absence of any environment gate
+  recorded
+
+### Fixed
+- `apply.yml`: removed the false "Production apply (requires manual approval)"
+  claim — verified via the GitHub environments API that no `production`
+  environment exists and that `dev`/`staging` have zero `protection_rules`
+- `audit/soc2-checklist.yml`: CC8.1-04 changed from `implemented` to
+  `not_implemented`, with the evidence field corrected to record that the cited
+  control does not exist. A checklist asserting a non-existent approval gate is
+  a fabricated compliance record
+- `AGENTS.md`: enforcement-truth table updated for the gated apply jobs and the
+  missing `production` environment
+
 ## [1.1.1] - 2026-09-30
 
 ### Added
