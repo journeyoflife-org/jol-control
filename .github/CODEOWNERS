@@ -1,0 +1,24 @@
+# CODEOWNERS — jol-control
+#
+# This file identifies the owners of this repository's code. GitHub uses it
+# with require_code_owner_reviews to enforce that pull requests are reviewed
+# by at least one code owner before merging.
+#
+# Current state (2026-09-30): solo_mode = true. The organization has two
+# members (JourneyOfLife, IterVitae) and no teams with repository bindings.
+# require_code_owner_reviews is omitted from branch protection while
+# solo_mode is active, so this file is informational until teams are created
+# and solo_mode is disabled. See docs/solo-mode-exit.md for the exit criteria.
+#
+# Cross-org prohibition: CODEOWNERS must NOT reference teams from the
+# jolarca-dev organization (marketplace). All principals here belong to
+# journeyoflife-org (mission). See ADR-0004 in jol-docs.
+#
+# When the second operator arrives:
+#   1. Create teams (security, devops, backend) via GitHub UI or Terraform
+#   2. Add github_team_repository resources to bind teams to repos
+#   3. Update the patterns below to reference team slugs: @journeyoflife-org/security etc.
+#   4. Set solo_mode = false in terraform.tfvars and apply
+
+# Default: all files owned by the platform owner
+*	@JourneyOfLife
