@@ -109,9 +109,15 @@ declarative policy definitions, and automated compliance gates.
 
 ## Team Access
 
+> **Current status:** The teams listed below are the **target baseline**. The
+> actual GitHub organization currently has five teams: `backend`, `data`,
+> `devops`, `frontend`, `security`. No team-repository bindings are enforced
+> via Terraform. The `repos/*.yml` team assignments reference existing teams
+> (`security`, `devops`, `backend`) but are decorative until team-repository
+> bindings are provisioned.
+
 | Team | Permission | Purpose |
 |------|-----------|---------|
-| platform-admins | admin | Break-glass, Terraform apply, org settings |
-| developers | push (platform/devops/site), pull (governance) | Day-to-day development |
-| auditors | pull (all repos) | Read-only compliance review |
-| security | push (all repos) | Incident response access |
+| security | admin | Break-glass, Terraform apply, org settings |
+| devops | push (platform/devops/site), pull (governance) | Day-to-day development |
+| backend | pull (all repos) | Read-only compliance review |

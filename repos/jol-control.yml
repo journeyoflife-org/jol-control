@@ -56,9 +56,9 @@ branch_protection:
     block_force_pushes: true
     block_deletions: true
 teams:
-  platform-admins: admin
-  developers: pull
-  auditors: pull
+  security: admin
+  devops: pull
+  backend: pull
 compliance:
   frameworks:
   - soc2

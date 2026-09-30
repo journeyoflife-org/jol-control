@@ -30,21 +30,21 @@ This register tracks drift between Terraform state, configuration, and live GitH
 ### S2-001: Required status check contexts don't match reality
 
 **Discovered:** 2026-09-30  
-**Status:** OPEN  
-**Finding:** 28 repos declare `ci / test`, 23 declare `codeql-analysis`, 12 declare `dependency-review` as required contexts. But CodeQL is not running on most repos, and many repos have no CI workflows.  
+**Status:** FIXED  
+**Finding:** 28 repos declared `ci / test`, 23 declared `codeql-analysis`, 12 declared `dependency-review` as required contexts. But CodeQL is not running on most repos, and many repos have no CI workflows.  
 **Impact:** When `solo_mode` is disabled and required status checks are enforced, merges will block because the required checks never report.  
 **Current mitigation:** `solo_mode = true` drops `required_status_checks` entirely, so contexts are inert.  
-**Resolution path:** Either implement the CI workflows in each repo, or update contexts to match what each repo actually emits.  
-**Files affected:** `repos/*.yml` (28 files with incorrect contexts)
+**Resolution:** Cleared contexts to `[]` for all repos except jol-control (which has correct contexts matching compliance-scan.yml job names). When CI is added to a repo, update its contexts to match the actual check-run names.  
+**Files affected:** `repos/*.yml` (39 files updated)
 
 ### S2-002: Teams referenced in config do not exist
 
 **Discovered:** 2026-09-30 (audit)  
-**Status:** OPEN  
-**Finding:** `repos/*.yml` reference teams `platform-admins`, `developers`, `auditors` which do not exist. Existing teams: `backend`, `data`, `devops`, `frontend`, `security`.  
+**Status:** FIXED  
+**Finding:** `repos/*.yml` referenced teams `platform-admins`, `developers`, `auditors` which do not exist. Existing teams: `backend`, `data`, `devops`, `frontend`, `security`.  
 **Impact:** Team-based access control is not enforced. Compliance claims about team restrictions are false.  
-**Resolution path:** Either create the referenced teams, or update `repos/*.yml` to reference existing teams.  
-**Files affected:** `repos/*.yml` (team assignments)
+**Resolution:** Updated team references in `repos/*.yml` to reference existing teams: `platform-admins` → `security`, `developers` → `devops`, `auditors` → `backend`. Updated `docs/architecture.md` Team Access section to match. Note: team-repository bindings are not enforced via Terraform; team assignments in YAML are decorative until bindings are provisioned.  
+**Files affected:** `repos/*.yml` (40 files updated), `docs/architecture.md`
 
 ### S2-003: State is local, not remote
 
