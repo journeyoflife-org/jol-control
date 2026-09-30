@@ -5,6 +5,48 @@ All notable changes to jol-control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-09-30
+
+### Added
+- `docs/drift-findings.md` — drift findings register tracking divergence between
+  Terraform state, configuration, and live GitHub state. Severity levels: S0
+  (stop-work), S1 (fix before apply), S2 (fix soon). Records S1-001 (private
+  repo branch protection, FIXED), S2-001 (stale contexts, FIXED), S2-002
+  (non-existent team references, FIXED), S2-003 (local state, OPEN/RA-03),
+  plus three resolved findings from the refresh-only reconcile
+- `docs/solo-mode-exit.md` — exit criteria and transition checklist for
+  disabling `solo_mode`. Four sections: team structure, CI/CD infrastructure,
+  compliance posture (marked DONE 2026-09-30), and approval workflow. Includes
+  pre-flight verification commands, rollback procedure, and notes on decorative
+  team assignments and empty contexts
+
+### Changed
+- `repos/*.yml` (39 files): cleared `required_status_checks.contexts` to `[]`.
+  Contexts like `ci / test`, `codeql-analysis`, and `dependency-review`
+  referenced CI workflows that do not exist in those repos. Only `jol-control`
+  retains contexts (`Validate Repo Allow-List`, `Policy Compliance Check`)
+  matching the check-run names emitted by `compliance-scan.yml`. While
+  `solo_mode = true` makes contexts inert, clearing them prevents merge blocks
+  when `solo_mode` is eventually disabled
+- `repos/*.yml` (40 files): updated team references to existing teams:
+  `platform-admins` → `security`, `developers` → `devops`, `auditors` →
+  `backend`. The previous team names do not exist in the organization
+  (verified: `backend`, `data`, `devops`, `frontend`, `security`). Team
+  assignments remain decorative until `github_team_repository` Terraform
+  resources are provisioned
+- `docs/architecture.md`: Team Access section updated to reference existing
+  teams, with a note that team-repository bindings are not enforced via
+  Terraform and assignments are decorative
+
+### Fixed
+- S2-001: required status check contexts no longer reference non-existent CI
+  workflows. When `solo_mode` is disabled, empty contexts will not block merges
+- S2-002: team references in `repos/*.yml` now point to teams that actually
+  exist in the organization
+- S2-003: local Terraform state documented in `docs/drift-findings.md` as an
+  open finding with RA-03 risk acceptance. No infrastructure change; mitigation
+  path (HCP Terraform migration) documented in `docs/solo-mode-exit.md`
+
 ## [1.1.2] - 2026-09-30
 
 ### Changed
