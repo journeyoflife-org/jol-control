@@ -63,6 +63,9 @@ branch deletion, and `prevent_destroy` on `github_repository` and
 `prevent_destroy` or `lifecycle` block, `required_approving_review_count`, and
 anything in `branch-protection.tf`'s dynamic blocks.
 
+> **solo_mode exit criteria:** see `docs/solo-mode-exit.md` for the conditions
+> under which `solo_mode` should be disabled and the transition checklist.
+
 ## 5. STOP conditions — halt and report, do not proceed
 
 1. A plan shows **any** destroy or replace action (`make plan-gate` exits 1).
