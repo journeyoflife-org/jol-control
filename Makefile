@@ -2,7 +2,7 @@
 # JOL Control Plane — Makefile
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: help validate plan apply fmt lint drift compliance clean
+.PHONY: help validate plan plan-gate apply fmt lint drift compliance test clean init list-repos count-repos
 
 .DEFAULT_GOAL := help
 
@@ -18,6 +18,9 @@ validate: ## Validate all repo YAML definitions
 compliance: ## Run full compliance check
 	python3 scripts/compliance_check.py
 
+test: ## Run plan-gate self-tests (no pytest required)
+	python3 tests/test_plan_gate.py
+
 # ── Terraform ────────────────────────────────────────────────────────────────
 init: ## Initialize Terraform
 	terraform init -input=false
@@ -30,8 +33,14 @@ lint: fmt validate ## Run all linting (terraform fmt + YAML validation)
 plan: validate ## Run terraform plan
 	terraform plan -input=false -out=tfplan
 
-apply: ## Apply terraform changes (use CI/CD instead!)
-	@echo "WARNING: Use CI/CD pipeline for applies. Local apply is for emergencies only."
+plan-gate: ## STOP gate — halt if the plan destroys or replaces anything
+	terraform show -json tfplan > tfplan.json
+	python3 scripts/plan_gate.py tfplan.json
+
+apply: plan-gate ## Apply the saved plan (blocked when the gate halts)
+	@echo "WARNING: this host holds the only copy of terraform.tfstate."
+	@echo "         CI cannot apply — it has no access to this state."
+	@echo "         The plan gate above reported no destroy/replace actions."
 	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	terraform apply -input=false tfplan
 
@@ -47,4 +56,4 @@ count-repos: ## Count managed repositories
 	@echo "Managed repositories: $$(ls -1 repos/*.yml | wc -l)"
 
 clean: ## Remove generated files
-	rm -f tfplan plan-output.txt compliance-report.json compliance-snapshot.json
+	rm -f tfplan tfplan.json plan-output.txt compliance-report.json compliance-snapshot.json

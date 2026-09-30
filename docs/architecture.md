@@ -75,13 +75,27 @@ declarative policy definitions, and automated compliance gates.
 | site | 10 | 1 | Optional | dependency, secret, license, quality, SAST |
 | template | 1 | 1 | Optional | dependency, secret, license, quality |
 
+> **Enforcement status:** the Reviewers / Code Owners columns and the tier
+> labels in the diagram above are the **target baseline**. With
+> `solo_mode = true` in `terraform.tfvars`, `branch-protection.tf` omits both
+> `required_pull_request_reviews` and `required_status_checks`, so no approval
+> or CI gate currently blocks a merge to `main`. Still enforced: signed commits,
+> linear history, no force-push, no branch deletion, and `prevent_destroy` on
+> `github_repository` and `github_branch_protection`. Set `solo_mode = false`
+> when the first engineers are hired.
+
 ## Data Flow
 
 1. **Define**: Engineer creates/edits `repos/<name>.yml` with repo settings
 2. **Validate**: `scripts/validate_repos.py` checks YAML against policy
 3. **Plan**: PR triggers `terraform plan` → posted as PR comment
-4. **Review**: 2 approvers (governance) or 1 approver (standard) review plan
-5. **Apply**: Merge to main → `terraform apply` through dev → staging → prod
+4. **Review**: 2 approvers (governance) or 1 approver (standard) review plan —
+   target baseline, not enforced while `solo_mode = true` (see note above)
+5. **Apply**: the authoritative apply runs on the control-plane host against the
+   local `terraform.tfstate`; CI runners have no access to that state (see State
+   Management below). Verified: both `apply.yml` runs failed after planning
+   `120 to add` from an empty state and hitting HTTP 403 on
+   `POST /orgs/journeyoflife-org/repos`
 6. **Monitor**: Weekly `compliance-scan.yml` checks for drift and violations
 
 ## State Management
@@ -91,6 +105,7 @@ declarative policy definitions, and automated compliance gates.
 - State file is gitignored (never committed to version control)
 - **Risk**: Host loss = inability to reason about repository ownership; concurrent applies may corrupt state
 - **Mitigation plan**: Migrate to HCP Terraform (free tier) for remote state, locking, and versioning — see ADR-0006 in jolarca-control for reference architecture
+- **Guard**: `scripts/plan_gate.py` (invoked by `make plan-gate` and by `plan.yml`) refuses any plan that destroys or replaces a resource, and refuses a create-heavy plan built on an empty state — the exact failure mode observed in `apply.yml`. It fails closed: a missing, empty, or unparseable plan yields exit 2, never a pass
 
 ## Team Access
 

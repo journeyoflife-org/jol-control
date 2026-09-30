@@ -1,0 +1,4 @@
+{
+  "hello": "world",
+  "note": "Valid JSON that is not a terraform plan — the gate must fail closed, not pass."
+}

@@ -32,9 +32,18 @@ branch_protection:
   main:
     required_status_checks:
       strict: true
+      # A required context must match the check-run name GitHub actually reports.
+      # For Actions that is the job's own `name:` — verified live on this repo via
+      # the check-runs API, which returned bare job names ("Dev — Validate",
+      # "Staging — Apply"), NOT a "workflow / job" string.
+      # Both contexts below come from compliance-scan.yml, which triggers on every
+      # PR to main with no path filter. plan.yml is deliberately NOT required: it
+      # has path filters, so a docs-only PR would never report it and the merge
+      # would block forever. "codeql-analysis" was removed because no CodeQL
+      # workflow exists here; re-add it with the workflow, never before.
       contexts:
-      - compliance-scan / validate
-      - codeql-analysis
+      - Validate Repo Allow-List
+      - Policy Compliance Check
     required_pull_request_reviews:
       required_approving_review_count: 2
       dismiss_stale_reviews: true

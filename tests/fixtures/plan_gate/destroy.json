@@ -1,0 +1,51 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "resource_changes": [
+    {
+      "address": "github_repository.repo[\"jol-repo-template\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-repo-template",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "jol-repo-template", "visibility": "public"},
+        "after": null,
+        "replace_paths": null
+      }
+    },
+    {
+      "address": "github_branch_protection.standard[\"jol-repo-template\"]",
+      "mode": "managed",
+      "type": "github_branch_protection",
+      "name": "standard",
+      "index": "jol-repo-template",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["delete"],
+        "before": {"pattern": "main"},
+        "after": null,
+        "replace_paths": null
+      }
+    },
+    {
+      "address": "github_repository.repo[\"jol-hub\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-hub",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["no-op"],
+        "before": {"name": "jol-hub"},
+        "after": {"name": "jol-hub"},
+        "replace_paths": null
+      }
+    }
+  ]
+}

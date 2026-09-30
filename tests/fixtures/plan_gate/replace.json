@@ -1,0 +1,37 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "resource_changes": [
+    {
+      "address": "github_repository_vulnerability_alerts.repo[\"jol-status\"]",
+      "mode": "managed",
+      "type": "github_repository_vulnerability_alerts",
+      "name": "repo",
+      "index": "jol-status",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {"repository": "jol-status", "enabled": true},
+        "after": {"repository": "jol-status-renamed", "enabled": true},
+        "replace_paths": [["repository"]]
+      }
+    },
+    {
+      "address": "github_repository.repo[\"jol-hub\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-hub",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["update"],
+        "before": {"description": "old"},
+        "after": {"description": "new"},
+        "replace_paths": null
+      }
+    }
+  ]
+}

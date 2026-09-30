@@ -1,0 +1,76 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "prior_state": {
+    "format_version": "1.0",
+    "values": {
+      "root_module": {
+        "resources": [
+          {
+            "address": "github_repository.repo[\"jol-hub\"]",
+            "mode": "managed",
+            "type": "github_repository",
+            "name": "repo",
+            "index": "jol-hub",
+            "values": {"name": "jol-hub", "visibility": "public"}
+          },
+          {
+            "address": "github_repository.repo[\"jol-dr\"]",
+            "mode": "managed",
+            "type": "github_repository",
+            "name": "repo",
+            "index": "jol-dr",
+            "values": {"name": "jol-dr", "visibility": "public"}
+          }
+        ]
+      }
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "github_repository.repo[\"jol-hub\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-hub",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["no-op"],
+        "before": {"name": "jol-hub", "visibility": "public"},
+        "after": {"name": "jol-hub", "visibility": "public"},
+        "replace_paths": null
+      }
+    },
+    {
+      "address": "github_repository.repo[\"jol-dr\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-dr",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["update"],
+        "before": {"name": "jol-dr", "visibility": "public"},
+        "after": {"name": "jol-dr", "visibility": "private"},
+        "replace_paths": null
+      }
+    },
+    {
+      "address": "github_repository.repo[\"jol-new\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-new",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "jol-new", "visibility": "public"},
+        "replace_paths": null
+      }
+    }
+  ]
+}

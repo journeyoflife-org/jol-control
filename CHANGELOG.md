@@ -5,6 +5,53 @@ All notable changes to jol-control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-30
+
+### Added
+- `scripts/plan_gate.py` — STOP gate that refuses any plan destroying or
+  replacing a resource, and also refuses a create-heavy plan built on an empty
+  state: the failure mode proven in this repo's own `apply.yml` history
+  (`120 to add` from an empty state, then HTTP 403). Parses `terraform show -json`
+  rather than plan text, and fails **closed** with distinct exit codes:
+  0 safe, 1 refused, 2 unevaluated
+- `tests/test_plan_gate.py` and `tests/fixtures/plan_gate/` — 11 self-tests over
+  fixtures derived from real captured `terraform show -json` output, so the gate
+  cannot go inert silently
+- `make plan-gate` and `make test` targets; `plan.yml` now runs the gate
+  self-test and the destroy/replace gate on every PR
+- `AGENTS.md` — version-controlled agent rules: verified commands, edit
+  boundaries, explicit STOP conditions, and the current enforcement truth
+
+### Changed
+- `make apply` now depends on `plan-gate` and no longer advises "use CI/CD
+  instead" — CI cannot apply, because state is local to the control-plane host
+- `repos/jol-control.yml` required status checks now name check-runs this repo
+  actually emits (`Validate Repo Allow-List`, `Policy Compliance Check`) — GitHub
+  reports bare Actions job names, verified live via the check-runs API, not
+  `workflow / job` strings. The unsatisfiable `compliance-scan / validate` and
+  `codeql-analysis` entries were removed
+- `policy/repo-defaults.yml` documents that a required context must equal the
+  check-run name GitHub reports (the bare Actions job `name:`), and records that
+  the org-wide check names are NOT verified against the 39 managed repositories
+- `.gitignore` now excludes generated `tfplan.json`
+
+### Fixed
+- Documentation accuracy: annotated reviewer/approval gates in `README.md`,
+  `CONTRIBUTING.md`, `docs/architecture.md`, `docs/change-management.md`, and
+  `docs/runbooks.md` to state that they are the target baseline and are **not**
+  enforced while `solo_mode = true`
+- `policy/repo-defaults.yml`: corrected the `allow_merge_commit: false` comment —
+  the baseline is not "squash-only" because `allow_rebase_merge: true`; linearity
+  comes from `require_linear_history`
+- `README.md` / `docs/architecture.md` / `docs/change-management.md`: replaced the
+  "applied automatically via GitHub Actions (dev → staging → prod)" claim with the
+  actual apply path — local `terraform.tfstate` on the control-plane host, which
+  CI runners cannot reach, with the default `GITHUB_TOKEN` only — since proven by
+  both `apply.yml` runs failing with HTTP 403 after a 120-resource empty-state plan
+- `CONTRIBUTING.md`: documented which checks CI actually runs, listed the
+  check-run names GitHub really reports for this repo, and recorded that the
+  `ci / lint` and `ci / test` contexts are not produced by any workflow here
+
 ## [1.1.0] - 2026-09-26
 
 ### Added

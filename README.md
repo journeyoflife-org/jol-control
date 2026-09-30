@@ -84,9 +84,23 @@ terraform init
 terraform plan -out=tfplan
 ```
 
-### Apply Changes (CI/CD only)
-Changes are applied automatically via GitHub Actions on merge to `main`:
-- **dev** → **staging** → **production** (with manual approval gate)
+### Apply Changes
+Terraform state is **local** (`terraform.tfstate` on the control-plane host,
+gitignored, no remote backend — see `docs/architecture.md`). GitHub Actions
+runners have no access to that state, and CI runs with the default
+`GITHUB_TOKEN` only, while the provider requires `admin:org`, `repo`,
+`write:org`, and `admin:repo_hook` (see `main.tf`).
+
+The authoritative apply path is therefore the control-plane host:
+`make plan` → review the plan for destroys/replaces → `make apply`.
+`.github/workflows/plan.yml` and `apply.yml` provide YAML validation,
+`terraform validate`, and PR plan comments; they are **not** a working
+org-wide apply pipeline. Verified live: both `apply.yml` runs concluded in
+failure — the runner planned from an empty state (`Plan: 120 to add, 0 to
+change, 0 to destroy`) and then received `403 Resource not accessible by
+integration`. Remote state (HCP Terraform) plus an org-scoped token are
+prerequisites. `scripts/plan_gate.py` refuses both destructive plans and
+empty-state mass-create plans.
 
 ## Tier Model
 
@@ -97,6 +111,15 @@ Changes are applied automatically via GitHub Actions on merge to `main`:
 | devops | 5 | 1 | Standard + IaC + container |
 | site | 10 | 1 | Standard |
 | template | 1 | 1 | Basic |
+
+> **Current enforcement status:** `solo_mode = true` in `terraform.tfvars`
+> (single-owner operation). The reviewer counts above are the **target
+> baseline**, not live controls: while solo_mode is true, `branch-protection.tf`
+> omits both `required_pull_request_reviews` and `required_status_checks`, so no
+> PR approval or CI check gates a merge to `main`. Controls that remain enforced:
+> signed commits, linear history, no force-push, no branch deletion, and
+> `prevent_destroy` on `github_repository` and `github_branch_protection`.
+> Set `solo_mode = false` when the first engineers are hired.
 
 ## Managed Repositories
 

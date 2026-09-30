@@ -11,8 +11,10 @@
 2. Run `python3 scripts/validate_repos.py` — must pass
 3. Open PR — terraform plan will post the proposed changes
 4. Review plan output (new `github_repository` + `github_branch_protection` resources)
-5. Merge after required approvals
-6. Verify: `terraform apply` creates the repo with correct settings
+5. Merge after required approvals — *target baseline; not enforced while
+   `solo_mode = true`, see `docs/change-management.md`*
+6. Verify: `terraform apply` creates the repo with correct settings (run on the
+   control-plane host — it holds the only copy of `terraform.tfstate`)
 
 ### Verification
 ```bash
@@ -30,7 +32,8 @@ python3 scripts/drift_detect.py
 1. Update `visibility` field in `repos/<repo-name>.yml`
 2. OR add repo name to `sensitive_repos` in `terraform.tfvars`
 3. Open PR — review plan carefully (visibility change is a significant operation)
-4. Merge after 2 approvals (governance tier)
+4. Merge after 2 approvals (governance tier) — *target baseline; not enforced
+   while `solo_mode = true`*
 5. Verify: `gh repo view journeyoflife-org/<repo-name> --json visibility`
 
 ### Warning

@@ -1,0 +1,38 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "_fixture_note": "Reproduces the real jol-control apply.yml failure of 2026-09-26: the runner had no access to terraform.tfstate, so the plan reported '120 to add, 0 to change, 0 to destroy' and the apply died with HTTP 403. There is deliberately NO prior_state key — that absence is the signal the gate must catch, because prevent_destroy never fires when nothing is being destroyed.",
+  "resource_changes": [
+    {
+      "address": "github_repository.repo[\"jol-hub\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-hub",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "jol-hub", "visibility": "public"},
+        "replace_paths": null
+      }
+    },
+    {
+      "address": "github_repository.repo[\"jol-dr\"]",
+      "mode": "managed",
+      "type": "github_repository",
+      "name": "repo",
+      "index": "jol-dr",
+      "provider_name": "registry.terraform.io/integrations/github",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "jol-dr", "visibility": "private"},
+        "replace_paths": null
+      }
+    }
+  ]
+}

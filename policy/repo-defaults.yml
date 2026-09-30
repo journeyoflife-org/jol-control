@@ -20,9 +20,9 @@ repository_defaults:
   has_wiki: false
   has_projects: false
   delete_branch_on_merge: true
-  allow_merge_commit: false          # squash-only to keep linear history
+  allow_merge_commit: false          # merge commits disabled — NOT "squash-only" (rebase is also enabled)
   allow_squash_merge: true
-  allow_rebase_merge: true
+  allow_rebase_merge: true           # linear history is enforced by require_linear_history, not by squash-only
   auto_init: false
   archived: false
   vulnerability_alerts: true
@@ -58,6 +58,16 @@ branch_protection:
       pattern: "v*"
 
 # ── Required CI checks (minimum set for ALL repos) ──────────────────────────
+# Context names MUST match the check-run name GitHub actually reports. For
+# Actions that is the job's own `name:` value — verified live on jol-control,
+# whose check-runs API returned bare job names ("Dev — Validate"), not a
+# "workflow / job" string. Matrix jobs append " (<key>)".
+# A required context that no workflow emits blocks every merge forever, so each
+# value below must be verified against the target repository's own workflows
+# before it is enforced (i.e. before `solo_mode` is set to false).
+# Verification status: NOT verified for the 39 managed repos — their workflows
+# live in their own repositories. jol-control itself emits none of these; its
+# verified contexts are declared in repos/jol-control.yml.
 required_checks:
   pre_merge:
     - context: "ci / lint"

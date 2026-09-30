@@ -60,6 +60,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Plan Gate Self-Test (prove the gate is not inert)
+        run: python3 tests/test_plan_gate.py
+
+      - name: Destroy / Replace Gate (STOP on destructive plan)
+        run: |
+          terraform show -json tfplan > tfplan.json
+          python3 scripts/plan_gate.py tfplan.json
+
       - name: Policy Check (Conftest)
         run: |
           if command -v conftest &>/dev/null; then
