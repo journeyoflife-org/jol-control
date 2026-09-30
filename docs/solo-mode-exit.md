@@ -24,29 +24,28 @@ Disable `solo_mode` when **ALL** of the following are true:
 ### 1. Team Structure
 
 - [ ] At least **2 active engineers** with write access to the organization
-- [ ] Teams created and populated:
-  - `platform-admins` (admin on governance repos)
-  - `developers` (write on platform/devops repos)
-  - `auditors` (read on all repos, for compliance review)
-- [ ] Team-repository bindings enforced via `github_team_repository` resources
+- [ ] Teams exist and are populated (current teams: `backend`, `data`, `devops`, `frontend`, `security`)
+- [ ] Team assignments in `repos/*.yml` reference actual teams (currently: `security` for admin, `devops` for push, `backend` for pull)
+- [ ] Team-repository bindings enforced via `github_team_repository` Terraform resources
 - [ ] CODEOWNERS file in each repo referencing the correct teams
+
+> **Note:** Team assignments in `repos/*.yml` are currently decorative — Terraform does not provision `github_team_repository` resources. Before exiting solo_mode, implement team-repository bindings in Terraform or create them manually via GitHub UI.
 
 ### 2. CI/CD Infrastructure
 
 - [ ] Remote Terraform state backend provisioned (HCP Terraform)
 - [ ] State migration executed (local → remote)
 - [ ] Org-scoped GitHub token configured in CI secrets
-- [ ] CI workflows emit the check-run names declared in `repos/*.yml` contexts:
-  - `ci / test` (or update contexts to match actual job names)
-  - `codeql-analysis` (CodeQL workflow running on all repos)
-  - `dependency-review` (dependency review action running on all PRs)
+- [ ] CI workflows added to repos and `repos/*.yml` contexts updated to match actual check-run names
 - [ ] `TF_REMOTE_STATE_ENABLED=true` repository variable set
+
+> **Note:** As of 2026-09-30, `repos/*.yml` contexts are cleared to `[]` (except jol-control which has `Validate Repo Allow-List` and `Policy Compliance Check`). Before exiting solo_mode, add CI workflows to repos and update contexts to match the check-run names GitHub reports. Use: `gh api repos/OWNER/REPO/commits/BRANCH/check-runs --jq '.check_runs[].name'` to discover actual names.
 
 ### 3. Compliance Posture
 
-- [ ] Audit checklists (SOC2, ISO 27001, GDPR) updated to reflect actual enforcement
-- [ ] All controls claimed "implemented" are verified against live API
-- [ ] Drift findings register (`docs/drift-findings.md`) has no open S0 or S1 items
+- [x] Audit checklists (SOC2, ISO 27001, GDPR) updated to reflect actual enforcement — **DONE 2026-09-30**
+- [x] All controls claimed "implemented" are verified against live API — **DONE 2026-09-30**
+- [x] Drift findings register (`docs/drift-findings.md`) has no open S0 or S1 items — **DONE 2026-09-30** (S2-001, S2-002, S2-003 fixed)
 
 ### 4. Approval Workflow
 
@@ -62,12 +61,18 @@ When exiting `solo_mode`, execute in this order:
    ```bash
    # Verify team structure
    gh api orgs/journeyoflife-org/teams --jq '.[].slug'
+   # Expected: backend, data, devops, frontend, security
    
-   # Verify CI check-run names match contexts
+   # Verify CI check-run names match contexts in repos/*.yml
    gh api repos/journeyoflife-org/jol-control/commits/main/check-runs --jq '.check_runs[].name'
+   # Compare output to contexts: [] in each repos/*.yml
    
    # Verify remote state
    terraform init  # should pull from remote backend
+   
+   # Verify no open S0/S1 drift findings
+   grep -c "Status:.*OPEN" docs/drift-findings.md
+   # Expected: 0 (or only S2 items)
    ```
 
 2. **Update terraform.tfvars**
