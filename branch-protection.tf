@@ -15,15 +15,18 @@
 
 locals {
   # Governance repos require 2 reviewers + CODEOWNERS enforcement (non-solo)
+  # NOTE: Private repos are excluded because GitHub requires Pro for branch
+  # protection on private repos. See jol-dr for the only private repo.
   governance_repos = {
     for name, def in local.repo_defs : name => def
-    if lookup(def, "tier", "") == "governance"
+    if lookup(def, "tier", "") == "governance" && lookup(def, "visibility", "public") != "private"
   }
 
   # All other repos require 1 reviewer (non-solo)
+  # NOTE: Private repos are excluded for the same reason as above.
   standard_repos = {
     for name, def in local.repo_defs : name => def
-    if lookup(def, "tier", "") != "governance"
+    if lookup(def, "tier", "") != "governance" && lookup(def, "visibility", "public") != "private"
   }
 }
 

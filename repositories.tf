@@ -64,7 +64,7 @@ resource "github_repository" "repo" {
 
   lifecycle {
     prevent_destroy = true # never accidentally delete a repo
-    ignore_changes  = [auto_init]
+    ignore_changes  = [auto_init, template] # template is computed from API for repos created from templates
   }
 }
 
