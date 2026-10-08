@@ -5,6 +5,27 @@ All notable changes to jol-control will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `scripts/state_gate.py` — STOP gate that refuses `terraform apply` when the state in
+  front of the config cannot account for what the config would create: 0-byte state file
+  (Terraform writes state atomically and never produces one on its own), state that
+  parses but holds zero managed resources, or no state at all while the directory
+  declares resources or module blocks. Reads `terraform.tfstate` **and**
+  `terraform.tfstate.d/<workspace>/terraform.tfstate`, and classifies a directory as
+  "not an apply target" only on positive evidence (a parent `module` block with a
+  relative source, or a vendored/quarantined tree) — never on absence of state.
+  A root whose backend is declared in `.tf`/`.tpl`/`.backend.hcl` is reported
+  UNEVALUATED rather than safe, because local files cannot see remote state.
+- `tests/test_state_gate.sh` — 16 self-tests with distinct exit codes
+  (0 safe / 1 refused / 2 cannot-check), built on the key shape of a real captured
+  Terraform 1.16.1 state document
+
+### Changed
+- `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
+  gates instead of one; `make test` runs the state-gate suite alongside plan-gate
+
 ## [1.1.3] - 2026-09-30
 
 ### Added
