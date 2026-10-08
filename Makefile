@@ -18,9 +18,10 @@ validate: ## Validate all repo YAML definitions
 compliance: ## Run full compliance check
 	python3 scripts/compliance_check.py
 
-test: ## Run gate self-tests (plan gate + state gate, no pytest required)
+test: ## Run gate self-tests (plan gate + state gate + drift gate, no pytest required)
 	python3 tests/test_plan_gate.py
 	bash tests/test_state_gate.sh
+	python3 tests/test_drift_gate.py
 
 # ── Terraform ────────────────────────────────────────────────────────────────
 init: ## Initialize Terraform

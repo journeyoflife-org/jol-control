@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_state_gate.sh` — 16 self-tests with distinct exit codes
   (0 safe / 1 refused / 2 cannot-check), built on the key shape of a real captured
   Terraform 1.16.1 state document
+- `tests/test_drift_gate.py` + `tests/fixtures/drift_detect/` — 11 self-tests for
+  `scripts/drift_detect.py`, built on two real captures of `gh repo list
+  journeyoflife-org --json name,visibility`: the operator-token view (41 rows, one
+  PRIVATE) and the `secrets.GITHUB_TOKEN` view reconstructed from the log of failed run
+  37107745958 (39 rows, no private repository visible at all)
 
 ### Changed
 - `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
@@ -30,6 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/**`. Before this, a change to either gate could land with no CI run at all —
   an inert gate is worse than an absent one. The gate itself is not executed in CI: it
   judges local state, and CI has neither the state nor backend credentials
+
+### Fixed
+- `scripts/drift_detect.py`: the weekly Compliance Scan has failed since run 37107745958
+  (2026-10-03) reporting `in_defined_not_github: ["jol-dr"]`. **Nothing is missing:**
+  `jol-dr` exists with `visibility=PRIVATE` (`gh api repos/journeyoflife-org/jol-dr`),
+  and `make drift` on this host reports `NO DRIFT — All 40 repos match`. CI runs the
+  checker with `secrets.GITHUB_TOKEN`, which can only enumerate public repositories, so
+  the fleet's one private repo looked absent. The checker treated "cannot see" as "does
+  not exist". It now distinguishes the three verdicts with distinct exit codes
+  (0 evaluated-clean / 1 genuine drift / 2 unevaluated), and a private-blind or partial
+  enumeration returns 2 — never 1, and never 0. Every declared absence is confirmed by a
+  direct lookup, and a repository that answers a lookup while missing from the listing
+  makes the run UNEVALUATED rather than DRIFT.
+- `scripts/drift_detect.py`: fail-open path removed. Previously an empty listing or a
+  failed `gh` call printed a warning and returned **0**, so a fully blind run reported
+  the control as passing. A crash now maps to 2 as well
+- `.github/workflows/compliance-scan.yml`: the drift step now labels exit 2 as
+  `Drift detection UNEVALUATED` with the remedy named inline (an org-read token, or
+  `make drift` on the control-plane host) instead of emitting the same generic failure
+  as real drift; `validate-repos` runs the drift-gate self-test on every PR so the
+  checker itself cannot go inert
 
 ## [1.1.3] - 2026-09-30
 

@@ -32,6 +32,12 @@ jobs:
       - name: Validate all repo YAML definitions
         run: python3 scripts/validate_repos.py
 
+      - name: Drift Gate Self-Test (prove the checker is not inert)
+        # 11 fixtures replaying captured `gh repo list` output — including the exact
+        # private-blind listing this workflow's own token produces. Runs offline against
+        # a stub, so it needs no credentials and cannot be skipped into silence.
+        run: python3 tests/test_drift_gate.py
+
   policy-compliance:
     name: "Policy Compliance Check"
     needs: validate-repos
@@ -73,9 +79,29 @@ jobs:
         run: pip install pyyaml
 
       - name: Run drift detection
-        run: python3 scripts/drift_detect.py
+        # Exit codes: 0 evaluated-and-clean, 1 genuine drift, 2 cannot-check. 2 is reported
+        # as its own reason because this job's GITHUB_TOKEN can only enumerate public
+        # repositories (finding S14: that blindness once failed the weekly scan while
+        # `make drift` on the host reported NO DRIFT). Red either way — an unverified
+        # compliance control must never be presented as a passing one.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          python3 scripts/drift_detect.py | tee drift-report.json
+          rc=${PIPESTATUS[0]}
+          set -e
+          case "$rc" in
+            0) echo "Drift detection: EVALUATED, no drift." >> "$GITHUB_STEP_SUMMARY" ;;
+            1) echo "::error title=Drift detected::The allow-list and the organization genuinely disagree; see the job log for the named repositories."
+               echo "Drift detection: DRIFT DETECTED (exit 1)." >> "$GITHUB_STEP_SUMMARY"
+               exit 1 ;;
+            2) echo "::error title=Drift detection UNEVALUATED::This token cannot enumerate private repositories, so absence cannot be concluded. Grant an org-read token as ORG_READ_TOKEN and pass it here, or run 'make drift' on the control-plane host. An unevaluated control is not a passing control."
+               echo "Drift detection: UNEVALUATED (exit 2) — token cannot see private repos." >> "$GITHUB_STEP_SUMMARY"
+               exit 1 ;;
+            *) echo "::error title=Drift detection crashed::Unexpected exit code $rc — treated as unevaluated."
+               exit 1 ;;
+          esac
 
   security-scan:
     name: "Repository Security Scan"
