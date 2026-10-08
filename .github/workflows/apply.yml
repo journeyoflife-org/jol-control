@@ -25,6 +25,10 @@ on:
       - "policy/**"
       - "*.tf"
       - "*.tfvars"
+      # The gates themselves: a change to scripts/ or tests/ must prove the gate still
+      # works, otherwise a broken gate could land green simply by not being exercised.
+      - "scripts/**"
+      - "tests/**"
       - ".github/workflows/apply.yml"
 
 permissions:
@@ -66,6 +70,12 @@ jobs:
 
       - name: Plan Gate Self-Test (prove the gate is not inert)
         run: python3 tests/test_plan_gate.py
+
+      - name: State Gate Self-Test (prove the gate is not inert)
+        # 16 fixtures over the three exit codes: 0 safe / 1 refused / 2 cannot-check.
+        # The gate itself is a HOST-SIDE pre-apply check and is not run here: CI has no
+        # backend credentials, so it cannot read the inventory it would be judging.
+        run: bash tests/test_state_gate.sh
 
       - name: Record why no plan or apply runs in CI
         run: |

@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
   gates instead of one; `make test` runs the state-gate suite alongside plan-gate
+- `.github/workflows/apply.yml`: `dev-validate` now runs `bash tests/test_state_gate.sh`
+  next to the plan-gate self-test, and `on.push.paths` gained `scripts/**` and
+  `tests/**`. Before this, a change to either gate could land with no CI run at all —
+  an inert gate is worse than an absent one. The gate itself is not executed in CI: it
+  judges local state, and CI has neither the state nor backend credentials
 
 ## [1.1.3] - 2026-09-30
 
