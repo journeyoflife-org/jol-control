@@ -4,6 +4,29 @@ This register tracks drift between Terraform state, configuration, and live GitH
 
 **Priority:** S0 (Stop-Work) > S1 (Fix Before Apply) > S2 (Fix Soon)
 
+**Index.** Entries stay in the order they were discovered, because each carries the evidence
+timestamp and the corrections applied to it at the time; numbers never change once other
+documents cite them. In numeric order:
+
+| ID | Subject | Status |
+|---|---|---|
+| S1-001 | Private repos cannot have branch protection without GitHub Pro | fixed |
+| S1-002 | Drift detection reported "cannot see" as "does not exist", and a blind run as passing | checker fixed; CI still cannot evaluate |
+| S1-003 | Every published contact address in the fleet is undeliverable | open; intake and org defaults fixed, 24 repos to sweep |
+| S1-004 | The published donation path is a domain-parking lander | partially closed; affordance removed, capability absent |
+| S1-005 | `.github` code-owner review unsatisfiable — diagnosis later overtaken | superseded by S1-007 |
+| S1-006 | Shared workflow library scanned its own definition repo; one workflow uncallable | fixed; consumer proof owed |
+| S1-007 | `.github` PRs report `blocked` with nothing left to satisfy | open; escalated, needs merge box or Support |
+| S1-008 | Hand-set rulesets re-impose the review controls `solo_mode` removed, 19 of 40 repos | open; invisible to Terraform and drift |
+| S2-001 | Required status check contexts do not match reality | fixed |
+| S2-002 | Teams referenced in config do not exist | fixed (bindings still decorative) |
+| S2-003 | State is local, not remote | open, RA-03 accepted |
+| S2-004 | AGENTS.md cited a resolved state mismatch as current truth | fixed |
+| S2-005 | Git identity migration: authorship needs a verified account email | closed by decision |
+
+Two undated sections are folded in where they arose: *Measurement traps* (how three readings
+here went wrong) and *Process slip* (an edit made from a stale clone).
+
 ---
 
 ## S0 — Stop-Work / Critical
@@ -322,6 +345,58 @@ detection can see it.
 bypass recorded as a comment on PR #7.  
 **Files affected:** `journeyoflife-org/.github` ruleset (out of band, not in Terraform)
 
+### S1-008: Hand-set rulesets re-impose the review controls `solo_mode` removed, on 19 of 40 repositories
+
+**Discovered:** 2026-10-16  
+**Status:** OPEN — the declared baseline and the enforced state diverge silently  
+**Finding:** `solo_mode = true` exists precisely so this organization can operate with one
+member: `branch-protection.tf:39,53` omit `required_pull_request_reviews` entirely, and
+AGENTS.md §2 states that reviewers and CODEOWNERS are not enforced. That is true of the
+Terraform-managed **classic** protection — and separately contradicted by hand-configured
+**rulesets** on nearly half the fleet. Scanning all 40 public repositories: **21 rulesets
+across 19 repositories require at least one approving review, code-owner approval, or both.**
+
+| repository | ruleset | approving reviews | code owner |
+|---|---|---|---|
+| jol-compliance | `Protect main branch` / `protect-main` | 1 / 1 | false / **true** |
+| jol-hub | `protect-main` / `~master` | 1 / 1 | **true** / false |
+| jol-domain-taxonomy, jol-ecommerce-engine, jol-hermes-agents, jol-llm, jol-rag-server | `protect-main` | 1 | true |
+| jol-site-basilica, -cathedral, -cemetery-care, -deanery, -diocese, -funeral, -orthodox, -other-church, -parish, -protestant | `protect-main` | 1 | true |
+| jol-deploy, jol-infrastructure | `protect-main` | 0 | true |
+
+Neither mechanism can satisfy these: the sole org member cannot approve their own change, and
+no second member exists. Confirmed live on **jol-hub#151**, a dependabot PR sitting at
+`mergeable=true, mergeable_state=blocked` with `commits=1, requested_reviewers=0` — it will
+stay blocked forever. Two further details: jol-hub carries **two** rulesets plus classic
+protection simultaneously, and its classic protection says `count=0` while the rulesets say
+`1`, so the strictest silently wins; and one ruleset is named `~master` while its include
+pattern is `~DEFAULT_BRANCH`, which reads like a ref pattern typed into the name field.
+
+**Why Terraform cannot fix this:** there is no `github_repository_ruleset` resource in this
+baseline — `branch-protection.tf` says rulesets are deliberately deferred — so `terraform
+apply` will neither revert nor converge them, and `scripts/drift_detect.py` compares repository
+names and visibility only. The divergence is therefore permanent and invisible to every check
+this repository currently runs, which is the definition of an ungoverned control surface.
+**Consequence for the evidence pack:** any statement of the form "reviews are not enforced
+because we run in solo mode" is now incomplete: as enforced, **approvals are required on 19
+repositories and nobody can give them**, so the real merge path across half the fleet is an
+administrator bypass. That is worse than either extreme — a control nobody can satisfy is not
+an enforced control, it is an undocumented exception.
+**Remediation:** decide once, then make it true everywhere. Either (a) bring rulesets into the
+baseline as `github_repository_ruleset` with `required_approving_review_count: 0` (an ADR in
+`jol-docs` first — this is an infrastructure change), or (b) treat rulesets as the enforcement
+layer and delete the redundant classic protection so one system tells the truth. In both cases
+the 21 rulesets above need their approval requirement reconciled with the single-member
+reality, and `scripts/drift_detect.py` needs to compare rulesets so this cannot silently
+return.  
+**Evidence:** the scan is reproducible — for each public repo, list `…/rulesets`, then read
+each `…/rulesets/{id}` and take `rules[type=="pull_request"].parameters
+.required_approving_review_count` and `.require_code_owner_review`; `jol-dr` cannot be checked
+at all (`403 Upgrade to GitHub Pro or make this repository public to enable this feature`), so
+rulesets on the private repository are unknown.  
+**Files affected:** 19 repositories' hand-configured rulesets (none declared in Terraform),
+`scripts/drift_detect.py` (does not compare rulesets)
+
 ### Process slip in this session, recorded so it is not repeated
 
 The `.github` edits were made from a clone whose `main` was **8 commits behind
@@ -406,6 +481,9 @@ attributed authors, and is not behind the base branch — yet the API still repo
 | unattributed commits | `.author.login = JourneyOfLife` on all, including GitHub's squash commits | not it |
 | branch behind base | `compare` shows 2 ahead / 0 behind; PR `base.sha` equals `main` | not it |
 | `require_extra_approval_for_unattributed_changes` | toggled false → still blocked → **restored to true** so no unmanaged change was left behind | not it |
+| merge commits in the PR carrying an unverified signature | `GET /pulls/{n}/commits` for #7, #8, #9: every commit single-parent, `verified=true reason=valid`, none an implicit merge commit | not it |
+| unresolved review threads (`required_review_thread_resolution: true`) | `review_comments=0` on all three PRs | not it |
+| a ruleset/platform quirk shared with other repos | compared against peers: `jol-docs#3` is `mergeable_state=clean`, `jol-auth#19` is `unstable`, `jol-hub#151` is `blocked` **and legitimately so** (its rulesets demand 1 approval + code owner — see S1-008). So `blocked` is reachable for real reasons elsewhere, which makes `.github`'s empty requirement list stranger, not explained | not it |
 
 **Impact:** the only way to change the organization-wide `SECURITY.md`, `SUPPORT.md`,
 `CODE_OF_CONDUCT.md` or the shared CI library is an administrator bypass, and a bypass used

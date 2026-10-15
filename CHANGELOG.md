@@ -127,6 +127,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- `docs/drift-findings.md` S1-008 — **the control plane does not control enforcement.** A scan
+  of all 40 public repositories found **21 hand-configured rulesets across 19 repositories
+  requiring at least one approving review and/or code-owner approval** — exactly what
+  `solo_mode = true` was introduced to omit, and unsatisfiable with one org member. Confirmed
+  live: `jol-hub#151` (a dependabot PR) sits at `mergeable_state=blocked` with
+  `requested_reviewers=0` and will never merge on its own merits. `terraform apply` cannot
+  revert or converge any of it (no `github_repository_ruleset` resource exists), and
+  `scripts/drift_detect.py` compares names and visibility only, so the divergence is invisible
+  to every check this repo runs. `AGENTS.md` §2's first row was corrected accordingly: "reviews
+  are not enforced" was true of the baseline and misleading about the fleet. Also noted:
+  `jol-hub` carries two rulesets plus classic protection at once — `count=0` classic against
+  `count=1` rulesets, strictest wins — and one ruleset named `~master` applies to
+  `~DEFAULT_BRANCH`.
+- `docs/drift-findings.md` S1-007 — three further hypotheses eliminated with evidence: no
+  merge commit or unsigned commit in `.github` PRs #7/#8/#9 (every commit single-parent,
+  `verified=true reason=valid`), no unresolved review threads, and a peer comparison showing
+  `blocked` arises elsewhere for legitimate reasons (`jol-docs#3` clean, `jol-hub#151` blocked
+  by a real approval requirement). `.github`'s empty requirement list is therefore stranger,
+  not explained; it needs the web-UI merge box or GitHub Support.
 - `branch-protection.tf` deferred rulesets to "`docs/runbooks.md` RB-04", but RB-04 is
   *Update Compliance Gate* and says nothing about rulesets. It now points at the new RB-06 and
   states the two facts an operator needs before touching that area: `.github` is guarded by a

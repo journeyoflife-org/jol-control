@@ -22,7 +22,7 @@ human explicitly asks in the current session.
 
 | Statement | Reality | Evidence |
 |---|---|---|
-| "2 reviewers + CODEOWNERS protect main" | **Not enforced.** `solo_mode = true` | `terraform.tfvars:17`; `branch-protection.tf:39,53` omit the blocks |
+| "2 reviewers + CODEOWNERS protect main" | **Not enforced by Terraform — but partly re-implemented by hand, the other way.** `solo_mode = true` omits the review blocks, yet **21 hand-set rulesets across 19 of 40 repositories require ≥1 approving review and/or code-owner approval**, which a single-member organization cannot satisfy. So reviews are not enforced by the baseline and *are* demanded by the live configuration on half the fleet; PRs there can only merge by admin bypass | `terraform.tfvars:17`; `branch-protection.tf:39,53`; `docs/drift-findings.md` S1-008; live scan of `gh api repos/journeyoflife-org/<repo>/rulesets` per repository; observed: `jol-hub#151` `mergeable_state=blocked` with `requested_reviewers=0` |
 | "Squash-merge only" | **False.** Merge commits disabled, squash *and* rebase enabled | `allow_merge_commit=false`, `allow_squash_merge=true`, `allow_rebase_merge=true` |
 | "CI applies changes dev→staging→prod" | **Proven broken, now gated off.** Both runs failed (empty-state plan `120 to add`, then `403`). Apply jobs now require `vars.TF_REMOTE_STATE_ENABLED == 'true'` | `apply.yml` run history and job `if:` conditions; `main.tf:138-148` |
 | "Production apply requires manual approval" | **False.** No `production` environment exists; `dev` and `staging` have zero `protection_rules` | GitHub environments API; `audit/soc2-checklist.yml` CC8.1-04 is now `not_implemented` |
