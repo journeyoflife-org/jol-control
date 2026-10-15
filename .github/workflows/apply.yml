@@ -25,6 +25,9 @@ on:
       - "policy/**"
       - "*.tf"
       - "*.tfvars"
+      # AGENTS.md is a control surface, not prose: section 2 carries the enforcement truth an
+      # agent is required to read first, so an edit to it must be validated like a schema.
+      - "AGENTS.md"
       # The gates themselves: a change to scripts/ or tests/ must prove the gate still
       # works, otherwise a broken gate could land green simply by not being exercised.
       - "scripts/**"
@@ -76,6 +79,19 @@ jobs:
         # The gate itself is a HOST-SIDE pre-apply check and is not run here: CI has no
         # backend credentials, so it cannot read the inventory it would be judging.
         run: bash tests/test_state_gate.sh
+
+      - name: Enforcement-Table Gate (AGENTS.md section 2)
+        # Section 2 is what an agent reads before trusting any claim about this
+        # organization. It was checked by nobody, and a documentation-only commit used to start
+        # no run at all; AGENTS.md is now in this workflow's paths filter so a change to the
+        # rules file is validated rather than trusted.
+        run: python3 scripts/validate_agents_table.py AGENTS.md
+
+      - name: Enforcement-Table Gate Self-Test (prove that gate is not inert)
+        # 9 cases on a verbatim capture of the live table, with the broken variants derived
+        # from it by mutation: unescaped pipe, blank evidence cell, header-only table,
+        # missing section. Offline, so it cannot be skipped into silence.
+        run: python3 tests/test_agents_gate.py
 
       - name: Record why no plan or apply runs in CI
         run: |

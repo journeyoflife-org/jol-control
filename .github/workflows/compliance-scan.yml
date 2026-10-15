@@ -40,9 +40,9 @@ jobs:
 
       - name: Enforcement-Table Gate (AGENTS.md section 2)
         # AGENTS.md section 2 is what an agent reads before trusting any claim about this
-        # organization, and documentation-only commits are excluded from apply.yml's paths
-        # filter by design — so without this step a malformed row could sit on main
-        # unchecked. This workflow runs on every pull request and weekly, which covers both.
+        # organization, and it was checked by nobody. apply.yml now covers pushes to main
+        # (AGENTS.md was added to its paths filter); this workflow covers pull requests and
+        # the weekly schedule, so the rules file is validated on every path into main.
         run: python3 scripts/validate_agents_table.py AGENTS.md
 
       - name: Enforcement-Table Gate Self-Test (prove that gate is not inert)

@@ -28,13 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   37107745958 (39 rows, no private repository visible at all)
 - `scripts/validate_agents_table.py` + `tests/test_agents_gate.py` (9 cases) +
   `make agents-gate` — AGENTS.md section 2 is what an agent reads before trusting any claim
-  about this organization, and it was checked by nobody. Documentation-only commits are
-  excluded from `apply.yml`'s `paths:` filter by design, so a malformed row could sit on
-  `main` with no CI signal; the gate is therefore wired into `compliance-scan.yml`, which
-  runs on every pull request and weekly. It requires three non-empty cells per row and a
-  non-empty evidence cell, treats escaped `\|` as content rather than a separator, and fails
-  closed: 0 pass / 1 violation / 2 cannot-check, with a missing header, a missing section, an
-  unreadable file and a no-argument invocation all reporting UNEVALUATED rather than success.
+  about this organization, and it was checked by nobody. Documentation-only commits were
+  excluded from `apply.yml`'s `paths:` filter, so a malformed row could sit on `main` with no
+  CI signal at all; `AGENTS.md` is therefore now in that filter and the gate runs in
+  `Dev — Validate` on every push to `main`, plus in `compliance-scan.yml` on pull requests and
+  the weekly schedule. It requires three non-empty cells per row and a non-empty evidence cell,
+  treats escaped `\|` as content rather than a separator, and fails closed: 0 pass / 1
+  violation / 2 cannot-check, with a missing header, a missing section, an unreadable file and
+  a no-argument invocation all reporting UNEVALUATED rather than success.
   Fixtures are a verbatim capture of the live section and the broken variants are derived from
   it by mutation, reproducing the mistakes an editor actually makes — an unescaped pipe that
   silently adds a cell, a blank evidence column, a header-only table
