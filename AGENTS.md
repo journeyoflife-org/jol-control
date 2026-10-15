@@ -29,6 +29,7 @@ human explicitly asks in the current session.
 | "Required checks ci / lint, ci / test, codeql-analysis" | **Not emitted by this repo.** GitHub reports bare job names here: `Dev — Validate`, `Staging — Apply`, `Production — Apply` | Live check-runs API; `.github/workflows/` holds only plan.yml, apply.yml, compliance-scan.yml |
 | "Plan-only, no apply authority" | **False locally.** `make apply` applies on this host (now behind `plan-gate`); only CI's apply jobs are gated off | `Makefile` apply target; `apply.yml` job `if:` conditions |
 | "Targeted applies (-target) are the convention" | **False.** No `-target` usage anywhere in this repo | grep across `*.tf`, `Makefile`, `*.yml` |
+| "CI drift detection verifies the whole allow-list" | **Cannot verify.** In CI `scripts/drift_detect.py` runs with `secrets.GITHUB_TOKEN`, which enumerates only **public** repositories, so the fleet's one private repo (`jol-dr`) is invisible. The checker now reports that as UNEVALUATED (exit 2) instead of DRIFT — but it still cannot evaluate there. `make drift` on this host is the verifying run | Failed run 37107745958 (`in_defined_not_github: ["jol-dr"]` while `make drift` said `NO DRIFT — All 40 repos match`); `gh api repos/journeyoflife-org/jol-dr` → `visibility=PRIVATE`; `tests/test_drift_gate.py` fixture `ci_github_actions_token.json` |
 
 Still genuinely enforced: signed commits, linear history, no force-push, no
 branch deletion, and `prevent_destroy` on `github_repository` and
@@ -40,7 +41,8 @@ branch deletion, and `prevent_destroy` on `github_repository` and
 |---|---|---|
 | `make help` | List targets | |
 | `make validate` | Validate 40 repo YAML definitions | Expected: `PASSED — 40 repo definitions validated successfully.` |
-| `make test` | Plan-gate self-tests | Expected: `PASSED — 11 plan-gate tests, 0 failures.` |
+| `make test` | Self-tests for all three gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 16 state-gate`, `PASSED — 11 drift-gate` |
+| `make state-gate` | STOP gate: does the state on disk account for the config? | 0 safe / 1 refused / 2 cannot-check |
 | `make compliance` | Full compliance posture check | Writes `compliance-report.json` |
 | `make fmt` / `make lint` | `terraform fmt` + validation | |
 | `terraform validate` | Config validity | Expected: `Success! The configuration is valid.` |
@@ -48,7 +50,7 @@ branch deletion, and `prevent_destroy` on `github_repository` and
 | `terraform plan -refresh=false -input=false -out=tfplan` | Offline plan against local state | Verified to work with **no** token; shows config-vs-state deltas |
 | `make plan-gate` | STOP gate on the saved plan | Halts on any destroy/replace |
 | `make apply` | Apply the saved plan | Runs `plan-gate` first; asks for confirmation |
-| `make drift` | Allow-list vs GitHub drift | Requires `GITHUB_TOKEN` |
+| `make drift` | Allow-list vs GitHub drift | Requires a token that can read the org. Exit codes: 0 evaluated-clean / 1 genuine drift / 2 **unevaluated** (blind or partial listing) — 2 is not a pass |
 
 ## 4. Boundaries
 
@@ -81,8 +83,10 @@ anything in `branch-protection.tf`'s dynamic blocks.
    history, or force-push blocks.
 7. State and config disagree and live GitHub state has not been checked
    (`gh repo view journeyoflife-org/<repo> --json visibility`). A blind apply
-   can flip attributes the wrong way. Known live example: state records
-   `jol-dr` as `public` while GitHub reports it **PRIVATE**.
+   can flip attributes the wrong way. Historical example: state recorded
+   `jol-dr` as `public` while GitHub reported **PRIVATE**; reconciled by
+   `terraform apply -refresh-only` — verified 2026-10-09 that state (serial 306)
+   now records `visibility = "private"` and holds no branch protection for it.
 8. The same step has failed **twice**. Stop, report the exact command and full
    error output, and escalate — do not loop, and do not start "fixing" adjacent
    files that were not part of the task.

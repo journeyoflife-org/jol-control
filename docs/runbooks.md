@@ -19,8 +19,17 @@
 ### Verification
 ```bash
 gh repo view journeyoflife-org/<repo-name> --json url,visibility
-python3 scripts/drift_detect.py
+python3 scripts/drift_detect.py     # 0 = evaluated, no drift
+                                    # 1 = drift, the named repos are the evidence
+                                    # 2 = UNEVALUATED — not a pass and not a failure:
+                                    #     the token could not see the whole org. Run it
+                                    #     here, not in CI (see S1-002 in
+                                    #     docs/drift-findings.md)
 ```
+
+A new repository must be declared in `repos/*.yml` **and** exist in the organization;
+`drift_detect.py` reports a declared repo that answers no `gh api` lookup as drift, and
+refuses to conclude anything when its own enumeration is partial.
 
 ## RB-02: Change Repository Visibility
 
