@@ -66,11 +66,13 @@ evidence that the allow-list matches the organization.
 **Discovered:** 2026-10-15  
 **Status:** OPEN — contact sweep in progress. **Vulnerability intake FIXED**
 (private vulnerability reporting enabled on 40/40 public repositories, 2026-10-15).
-**Org defaults FIXED** — `journeyoflife-org/.github` PR #7 rewrites `SECURITY.md`,
-`SUPPORT.md` and `CODE_OF_CONDUCT.md`; queue is the **24 repositories that ship their
-own `SECURITY.md`** with a dead address, because a repository file overrides the
-default. `jol-auth` is excluded from this pass: another session holds it on
-`remediation/batch-0-s1` with 39 uncommitted files.  
+**Org defaults MERGED** — journeyoflife-org/.github PR #7, squash commit `c01de1b`,
+rewriting `SECURITY.md`, `SUPPORT.md` and `CODE_OF_CONDUCT.md`; verified on `main`
+that all three now contain **0** `@journeyoflife.org` / `@journeyoflife.lt` addresses.
+The merge needed an administrator bypass — see S1-005. Queue is the **24 repositories
+that ship their own `SECURITY.md`** with a dead address, because a repository file
+overrides the default. `jol-auth` is excluded from this pass: another session holds it
+on `remediation/batch-0-s1` with 39 uncommitted files.  
 **Finding:** Not state drift but the same class of defect as S2-002: configuration and
 documentation assert things that do not exist. 74 files across 27 repositories publish
 role mailboxes on three domains, and DNS says none of them can receive mail:
@@ -206,6 +208,19 @@ finance decision.
 link). Then change all three files together so the funding button, the support table and the
 issue-form sidebar cannot disagree, and re-curl to confirm the target returns the intended
 page rather than a redirect.  
+**Evidence that no donation path exists in code either (added same day):**
+`jol-hub/frontend/apps/master-site/src/app/donate/page.tsx:5` carries the comment
+`/* DonationWidget deferred — requires I18nProvider from [locale]/ layout */` and renders
+only an `<h1>Paramos forma</h1>` — the route exists, the widget is never mounted.
+`packages/ui/src/components/composite/donation-widget/DonationWidget.types.ts:8` declares
+only `onConfigure?: (selection) => void`: no provider, no submit, no form action.
+`master-site/.env.local` configures a Bitrix placeholder and no site domain, and
+`jol-infrastructure/.staging/fix-master-donate{,2}.py` removed a no-op `onConfigure` — the
+signature of a widget dressed up as implemented. **So the recommendation is to remove the
+donate reference, not repoint it**: `journeyoflife.eu` is parked too, which would trade one
+parking page for another. GitHub renders the parked URL as the organization's Sponsor button
+on every repository, and for a charitable platform advertising a donation path that collects
+nothing is worse than publishing none.  
 **Evidence:** `curl -s -L https://journeyoflife.org/donate`, `curl -s -L https://journeyoflife.eu/`,
 `dig +short NS/MX journeyoflife.org`, `grep` across `/opt/jol/repos` for payment-provider URL
 shapes (hits confined to vendored dependency metadata).  
@@ -244,6 +259,59 @@ them, and neither changed the enforcement state of anything.
    the file after the write rather than trusting the "inserted" message; repaired in commit
    `4f06ed1` on the PR branch. Any generator that writes markdown must use a quoted delimiter
    and then assert backtick balance and the presence of expected literals.
+
+### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
+
+**Discovered:** 2026-10-15  
+**Status:** OPEN — worked around by recorded admin bypass; durable fix is an owner decision  
+**Finding:** `journeyoflife-org/.github` `main` is guarded by ruleset `protect-main`
+(id 22978013) with `require_code_owner_review: true`, while this repository's
+`CODEOWNERS` resolves `*` to `@journeyoflife-org/security @journeyoflife-org/devops` and
+`/SECURITY.md` to `@journeyoflife-org/security`. Both teams exist, and their only member
+is the account that authors the change. GitHub does not accept the author's own approval
+as code-owner review, so with one member the requirement is **unsatisfiable**, not merely
+unmet: `gh pr merge` returns *"the base branch policy prohibits the merge"* no matter what
+the PR contains. PR #7 (the contact-channel fix) could only land with `--admin`.
+`.github/CHANGELOG.md` predicted this on 2026-09-12 — *"Code-owner review is declarative,
+not substantive… A second identity must be invited to the organization and added to the
+`security` and `devops` teams before this control can be evidenced"* — and the same entry
+states *"The bypass is not an approved merge path."* The second identity exists
+(`IterVitae`) but is refused by the organization's secure-2FA requirement, so the deadlock
+is total.  
+**Impact:** every future change to the organization-wide security, support and conduct
+documents requires a recorded policy bypass, which is the shape of an audit finding: a
+control that is asserted, cannot be satisfied, and is routinely overridden. Note the
+contrast — Terraform-managed repositories run `solo_mode = true` and omit review
+requirements entirely, so only this hand-configured ruleset is stricter than the
+declared posture, and it is not managed by any IaC in `jol-control`.  
+**Remediation, pick one (both are owner decisions):**
+(a) align the ruleset with `solo_mode` — set `require_code_owner_review` false and keep
+`required_signatures`, `required_linear_history`, `deletion`, `non_fast_forward` and
+squash-only; or (b) make the control real — invite a second identity, bring it into
+compliance with the org's 2FA requirement, add it to `security` and `devops`, and stop
+bypassing. Option (b) is the solo-mode exit documented in `docs/solo-mode-exit.md`. In
+either case the ruleset should end up declared in Terraform rather than hand-set, so drift
+detection can see it.  
+**Evidence:** `gh api repos/journeyoflife-org/.github/rulesets/22978013 --jq '.rules[]'`;
+`git show HEAD:.github/CODEOWNERS`; `gh api orgs/journeyoflife-org/teams`;
+`gh api orgs/journeyoflife-org/memberships/JourneyOfLife` → `admin, active`;
+`gh pr view 7` → `state=MERGED mergedAt=2026-10-15T17:55:31Z mergeCommit=c01de1b`;
+bypass recorded as a comment on PR #7.  
+**Files affected:** `journeyoflife-org/.github` ruleset (out of band, not in Terraform)
+
+### Process slip in this session, recorded so it is not repeated
+
+The `.github` edits were made from a clone whose `main` was **8 commits behind
+`origin/main`** (`85c4bed` vs `0d53643`). The concurrency check that ran beforehand
+looked at dirty files, unpushed commits and worktrees — and at nothing being modified in
+the last six hours — but never fetched, so it verified the working copy rather than the
+remote state. The merge happened to be clean: those 8 commits touched only
+`.github/workflows/*` and none of the three files edited here, confirmed afterwards with
+`git log 85c4bed..0d53643 -- SECURITY.md SUPPORT.md CODE_OF_CONDUCT.md` (empty) and by
+re-reading `SECURITY.md` on `main` (111 lines, all six sections intact). Had they overlapped,
+the squash would have quietly reverted another session's work. **Any edit to a sibling
+repository must `git fetch` and compare `HEAD` against `origin/<branch>` first**; a clean
+tree does not mean a current tree.
 
 ---
 

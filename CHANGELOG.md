@@ -113,11 +113,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry whose backticked terms were executed by bash through an unquoted heredoc delimiter,
   leaving sentences like "lives on , which has a null MX record" on a public branch — fixed in
   `4f06ed1`, with a backtick-balance assertion added to the procedure.
-- `journeyoflife-org/.github` PR #7 replaces every undeliverable role address in the
-  organization-wide `SECURITY.md`, `SUPPORT.md` and `CODE_OF_CONDUCT.md` with channels that
-  actually deliver, orders private vulnerability reporting ahead of e-mail, and withdraws the
-  `SECURITY.md` claim that pull-request review and code-owner approval protect `main` — they are
-  configured, not enforced, while one maintainer holds the org.
+- `journeyoflife-org/.github` PR #7 **merged** as squash commit `c01de1b`, replacing every
+  undeliverable role address in the organization-wide `SECURITY.md`, `SUPPORT.md` and
+  `CODE_OF_CONDUCT.md` with channels that deliver; verified on `main` that all three now hold
+  zero `@journeyoflife.org` / `@journeyoflife.lt` addresses. It orders private vulnerability
+  reporting ahead of e-mail and withdraws the `SECURITY.md` claim that pull-request review and
+  code-owner approval protect `main` — they are configured, not enforced, while one
+  maintainer holds the organization.
+- `docs/drift-findings.md` S1-005 — why #7 needed `--admin`: ruleset `protect-main` requires
+  code-owner review, `CODEOWNERS` resolves to the `security` and `devops` teams, and their only
+  member is the PR author, whose own approval GitHub does not count. The requirement is
+  unsatisfiable rather than unmet, which `.github/CHANGELOG.md` had already foretold on
+  2026-09-12 while also stating that the admin bypass is not an approved merge path — so the
+  bypass is recorded as a comment on the PR, and the durable fix is either to align the ruleset
+  with `solo_mode` or to complete the solo-mode exit.
+- `docs/drift-findings.md` S1-004 evidence extended: the donation widget is never mounted
+  (`master-site/src/app/donate/page.tsx` reads `DonationWidget deferred`), the component's types
+  declare no provider and no submit, and no site domain is configured anywhere — so no donation
+  path exists in code either, and the recommendation is removal, not repointing.
+- `docs/drift-findings.md` — a process slip recorded rather than buried: the `.github` edits
+  were made from a clone 8 commits behind `origin/main`. The pre-flight concurrency check
+  inspected dirty files, unpushed commits and worktrees but never fetched, so it proved the
+  working copy current instead of the remote. Verified afterwards that the unfetched commits
+  touched only `.github/workflows/*` and none of the edited files. A clean tree is not a
+  current tree.
 - `jol-hub` was the only repository on the host carrying local identity keys —
   `user.name = jol` plus a `user.email` that outranked the estate include. Both unset, so it
   now inherits `Gintaras Kazlauskas <journey4oflife@gmail.com>` like its siblings; its 17
