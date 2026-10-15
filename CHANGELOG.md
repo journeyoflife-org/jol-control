@@ -120,6 +120,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reporting ahead of e-mail and withdraws the `SECURITY.md` claim that pull-request review and
   code-owner approval protect `main` — they are configured, not enforced, while one
   maintainer holds the organization.
+- `journeyoflife-org/.github` PR #8 **withdraws the published donation link** from
+  `.github/FUNDING.yml`, `.github/ISSUE_TEMPLATE/config.yml` and `SUPPORT.md`, on the owner's
+  decision to remove rather than repoint. The only donation path the organization advertised
+  resolves to a registrar parking lander (114-byte redirect to `/lander`) and the donation
+  widget is never mounted in code, so GitHub was rendering a third-party advertising page as
+  the **Sponsor** button on every repository in a charitable organization whose own
+  `SECURITY.md` places donor records in PCI-DSS scope. The evidence and the condition for
+  re-adding are written into `FUNDING.yml` so the link is not restored from memory.
+  `github: [journeyoflife-org]` was left in place — it answers 200, not 404 — with its sponsor
+  tiers explicitly unverified. S1-004 is now PARTIALLY CLOSED: the broken affordance goes, the
+  inability to accept a donation online does not. The PR sits at `mergeState=BLOCKED` under
+  S1-005, the second merge in one day needing the same bypass.
 - `docs/drift-findings.md` S1-005 — why #7 needed `--admin`: ruleset `protect-main` requires
   code-owner review, `CODEOWNERS` resolves to the `security` and `devops` teams, and their only
   member is the PR author, whose own approval GitHub does not count. The requirement is

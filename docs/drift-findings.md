@@ -174,7 +174,10 @@ Occurrence counts from `grep -rEho "[A-Za-z0-9._%+-]+@journeyoflife\.(org|eu|lt)
 ### S1-004: The published donation path is a domain-parking lander, and no donation endpoint exists anywhere in the fleet
 
 **Discovered:** 2026-10-15  
-**Status:** OPEN — owner decision required, deliberately not guessed  
+**Status:** PARTIALLY CLOSED — the defective published affordance is being removed
+(`.github` PR #8, opened 2026-10-15, `mergeState=BLOCKED` by S1-005). The underlying
+capability gap **remains open**: the organization still cannot accept a donation online.
+Those are different findings and only the first is a governance defect.  
 **Finding:** Three public surfaces advertise `https://journeyoflife.org/donate` as the way to
 support the mission: `.github/SUPPORT.md`, `.github/FUNDING.yml` (which GitHub renders as the
 organization's funding link on every repository) and
@@ -204,10 +207,17 @@ gets a page for sale.
 than leaving a known-broken one. The correct destination — a hosted donate page, a payment
 provider URL, or removal of the link from `FUNDING.yml` until one exists — is an owner and
 finance decision.  
-**Remediation:** owner supplies the real donation endpoint (or authorizes removal of the
-link). Then change all three files together so the funding button, the support table and the
-issue-form sidebar cannot disagree, and re-curl to confirm the target returns the intended
-page rather than a redirect.  
+**Remediation, and what was decided:** the owner authorized **removal** on 2026-10-15, executed
+in journeyoflife-org/.github PR #8 — the `custom:` entry is deleted from
+`.github/FUNDING.yml` with the evidence and the re-add condition written into the file, the
+"Support the mission" contact link is removed from `.github/ISSUE_TEMPLATE/config.yml`
+(three contact links remain, YAML re-validated), and the `SUPPORT.md` row now states plainly
+that no online donation channel is published. `github: [journeyoflife-org]` was deliberately
+left untouched: it answers 200 rather than 404, and whether it presents real sponsor tiers was
+**not** verified, since GitHub serves a page shell either way. When a genuine endpoint exists,
+change all three files together so the Sponsor button, the support table and the issue-form
+sidebar cannot disagree, and re-fetch the target to prove it returns the intended page rather
+than a redirect.  
 **Evidence that no donation path exists in code either (added same day):**
 `jol-hub/frontend/apps/master-site/src/app/donate/page.tsx:5` carries the comment
 `/* DonationWidget deferred — requires I18nProvider from [locale]/ layout */` and renders
@@ -263,7 +273,10 @@ them, and neither changed the enforcement state of anything.
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
 **Discovered:** 2026-10-15  
-**Status:** OPEN — worked around by recorded admin bypass; durable fix is an owner decision  
+**Status:** OPEN — worked around by recorded admin bypass; durable fix is an owner decision.
+**PR #8 (donation-link removal) is now `mergeState=BLOCKED` by this same rule**, so the
+workaround is being asked for a second time within one day — which is the point at which a
+repeated bypass stops being an exception.  
 **Finding:** `journeyoflife-org/.github` `main` is guarded by ruleset `protect-main`
 (id 22978013) with `require_code_owner_review: true`, while this repository's
 `CODEOWNERS` resolves `*` to `@journeyoflife-org/security @journeyoflife-org/devops` and
@@ -311,7 +324,9 @@ remote state. The merge happened to be clean: those 8 commits touched only
 re-reading `SECURITY.md` on `main` (111 lines, all six sections intact). Had they overlapped,
 the squash would have quietly reverted another session's work. **Any edit to a sibling
 repository must `git fetch` and compare `HEAD` against `origin/<branch>` first**; a clean
-tree does not mean a current tree.
+tree does not mean a current tree. Applied on the follow-up change to the same repository
+(PR #8): `git fetch --prune` first, `behind=0 ahead=0 dirty=0` confirmed before any file was
+written, and the branch created afterwards.
 
 ---
 
