@@ -105,6 +105,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- `.github` PR #9 (`4a94b30`) stops the shared workflow library from scanning the repository
+  that only defines it, and makes `compliance-check.yml` callable. Three files filtered `push:`
+  by path but left `pull_request:` unfiltered, so nine checks failed on every pull request to
+  `.github` (`CodeQL could not process any code written in JavaScript/TypeScript`; unresolved
+  `frontend/pnpm-lock.yaml` cache path; `No file … matched to [data/requirements.txt or
+  **/pyproject.toml]`), and ten spokes were calling a workflow that never declared
+  `workflow_call` even though its own jobs read `inputs.repo-layout`. No `workflow_call`
+  interface changed, so no consumer breaks; each touched file is re-parsed and asserted to keep
+  `workflow_call` and gain `pull_request.paths`. Recorded as S1-006 — consumer-side proof is
+  still owed, because the historical failed run cannot be rerun.
+- S1-007, and a retracted diagnosis. With the nine failing checks gone, one passing check, zero
+  required approvals, valid signatures, attributed authors and an up-to-date branch, a pull
+  request to `.github` is *still* `mergeable_state=blocked` — so the earlier conclusion that the
+  code-owner rule caused it was wrong. The eight hypotheses eliminated are tabulated; the one
+  parameter toggled during testing was restored to `true`, leaving no unmanaged change; and the
+  public comment on PR #8 that asserted the wrong cause is corrected in-thread. Until the
+  merge-box text or GitHub Support names the requirement, every change to the org-wide security
+  policy or the CI library needs a recorded admin bypass — three in one day is an absent control
+  with paperwork, not an enforced one.
 - Two claims this session published and then retracted against better evidence: that
   journeyoflife-org/.github had *no* branch protection (it has an active ruleset — the legacy
   endpoint simply does not report rulesets), and that Terraform state held 11 branch

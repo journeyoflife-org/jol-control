@@ -269,14 +269,24 @@ them, and neither changed the enforcement state of anything.
    the file after the write rather than trusting the "inserted" message; repaired in commit
    `4f06ed1` on the PR branch. Any generator that writes markdown must use a quoted delimiter
    and then assert backtick balance and the presence of expected literals.
+4. **Correlation is not the merge blocker.** Nine failing checks were present whenever a
+   merge was blocked, so the checks looked like the cause — and the first draft of
+   `S1-005` said so in a public PR comment. Removing the failures left the block intact.
+   `mergeable_state=blocked` names a *review* deficiency, not a check failure, and
+   `allowed_merge_methods` / `update` parameters matter more than the presence of red
+   checks. Read the enum's meaning before writing a cause into a merge comment.
+5. **A reusable workflow's own `push`/`pull_request` triggers do not apply to callers**, so
+   filtering them in the library is safe for consumers — but a self-referential path entry
+   (`- '.github/workflows/security-scan.yml'`) makes the library re-scan the definition repo
+   whenever the library itself is edited, which is precisely the failure being fixed.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
 **Discovered:** 2026-10-15  
-**Status:** OPEN — worked around by recorded admin bypass; durable fix is an owner decision.
-**PR #8 (donation-link removal) is now `mergeState=BLOCKED` by this same rule**, so the
-workaround is being asked for a second time within one day — which is the point at which a
-repeated bypass stops being an exception.  
+**Status:** OPEN — worked around by recorded admin bypass. **The diagnosis in this entry
+was overtaken by evidence: the code-owner rule was not what blocked the merge.** See
+S1-006 and S1-007; the parameter is retained as changed (it was a real defect) but it did
+not restore a non-bypass merge path.  
 **Finding:** `journeyoflife-org/.github` `main` is guarded by ruleset `protect-main`
 (id 22978013) with `require_code_owner_review: true`, while this repository's
 `CODEOWNERS` resolves `*` to `@journeyoflife-org/security @journeyoflife-org/devops` and
@@ -327,6 +337,96 @@ repository must `git fetch` and compare `HEAD` against `origin/<branch>` first**
 tree does not mean a current tree. Applied on the follow-up change to the same repository
 (PR #8): `git fetch --prune` first, `behind=0 ahead=0 dirty=0` confirmed before any file was
 written, and the branch created afterwards.
+
+### S1-006: The shared workflow library scanned the repository that only defines it, and one workflow was not callable at all
+
+**Discovered:** 2026-10-15  
+**Status:** FIXED in `journeyoflife-org/.github` PR #9 (`4a94b30`); consumer-side proof outstanding  
+**Finding:** Two defects in the same set of files, both measured.
+
+1. `security-scan.yml`, `compliance-check.yml` and `payment-boundary-guard.yml` filter
+   `push:` by path but left `pull_request:` unfiltered, so application scanners ran inside
+   the **definition repository**, which contains no `backend/`, `frontend/`, `src/`, `app/`
+   or `data/requirements.txt`. Every pull request to `.github` therefore failed nine checks:
+   `CodeQL could not process any code written in JavaScript/TypeScript`; `Some specified
+   paths were not resolved, unable to cache dependencies` for
+   `cache-dependency-path: frontend/pnpm-lock.yaml`; `No file in .github matched to
+   [data/requirements.txt or **/pyproject.toml]`. Because `push:` is filtered, `main` shows
+   only two check runs — the breakage is invisible until someone tries to merge, at which
+   point it looks like a policy problem rather than a configuration one.
+2. `compliance-check.yml` is invoked as a reusable workflow by **ten** spokes
+   (`uses: journeyoflife-org/.github/.github/workflows/compliance-check.yml@main` with
+   `with: {repo-layout: flat}`) but its `on:` block never declared `workflow_call`, so the
+   call cannot resolve — while the file's own jobs already read `${{ inputs.repo-layout }}`,
+   which shows the trigger was intended and simply omitted. Sampled consumers are red
+   (`jol-site-deanery`, `-basilica`, `-cathedral`, `-parish`: `conclusion=failure`), the
+   non-consuming `jol-auth` is green, and `jol-hub`'s only match is inside
+   `docs/templates/`, not live CI, so it is not a counter-example. `workflow_call` was
+   already present in `security-scan.yml`, `payment-boundary-guard.yml`, `frontend-test.yml`
+   and `frontend-build.yml` — this file was the odd one out.  
+**Impact:** a shared control that never worked in the one repository that hosts it, and a
+compliance gate that silently did nothing for ten spokes that believed they had it.  
+**Resolution:** PR #9 added `workflow_call` with the `repo-layout` input (and optional
+`SNYK_TOKEN`), mirroring `security-scan.yml`, and gave the three `pull_request` triggers the
+same path filters as their own `push` triggers. Self-referential entries naming the workflow
+file itself were deliberately excluded from the guarded lists — including them made a pull
+request that edits the library re-trigger the scanners that cannot succeed here, which my
+first attempt did and the follow-up commit corrected. `frontend-test.yml` already had the
+guard and was reverted after my edit created a second `paths:` key in the same mapping. No
+`workflow_call` interface changed, so no consumer call site breaks; each touched file is
+re-parsed and asserted to retain `workflow_call` and to gain `pull_request.paths`.  
+**Outstanding:** consumer-side proof. Re-running the historical failed run is refused
+(`This workflow run cannot be rerun`), so a spoke needs a new push before the compliance job
+can be observed resolving against the fixed library. Do not mark the ten-spoke defect closed
+until that is seen.  
+**Evidence:** `gh run view 38805059782 --log-failed`, `gh run view 38805059669 --log-failed`;
+`gh api repos/journeyoflife-org/jol-site-deanery/actions/workflows/ci.yml/runs`; `grep -rl
+compliance-check.yml@main` over `/opt/jol/repos` (11 hits, of which jol-hub's 2 are
+templates); `gh api repos/journeyoflife-org/.github/rulesets/22978013`.  
+**Files affected:** `.github/workflows/security-scan.yml`, `compliance-check.yml`,
+`payment-boundary-guard.yml` (journeyoflife-org/.github)
+
+### S1-007: Pull requests in journeyoflife-org/.github report `blocked` with nothing left to satisfy
+
+**Discovered:** 2026-10-15  
+**Status:** OPEN — escalated; no in-band explanation found  
+**Finding:** after S1-006 was fixed, a pull request to `.github` runs **one** check and it
+passes, has zero required approvals, no code-owner requirement, valid signatures and
+attributed authors, and is not behind the base branch — yet the API still reports
+`mergeable=true, mergeable_state=blocked`, and `gh pr merge` refuses without `--admin`:
+"the base branch policy prohibits the merge". Eliminated with evidence, in order:
+
+| hypothesis | test | result |
+|---|---|---|
+| nine failing checks block it | fixed by S1-006; `gh pr checks 9` shows one check, `pass` | still blocked |
+| code-owner review unsatisfiable | `require_code_owner_review` false, read back cache-busted | still blocked |
+| required approving reviews | `required_approving_review_count: 0` | not it |
+| required status checks | `update` rule carries **no** parameters; org rulesets unavailable on this plan (`403 Upgrade to GitHub Team`) | not it |
+| unsigned commits | every commit `verified=true reason=valid` | not it |
+| unattributed commits | `.author.login = JourneyOfLife` on all, including GitHub's squash commits | not it |
+| branch behind base | `compare` shows 2 ahead / 0 behind; PR `base.sha` equals `main` | not it |
+| `require_extra_approval_for_unattributed_changes` | toggled false → still blocked → **restored to true** so no unmanaged change was left behind | not it |
+
+**Impact:** the only way to change the organization-wide `SECURITY.md`, `SUPPORT.md`,
+`CODE_OF_CONDUCT.md` or the shared CI library is an administrator bypass, and a bypass used
+three times in one day is not a control — it is an absent control with paperwork. The
+repository's own changelog has stated since 2026-09-12 that the bypass "is not an approved
+merge path".  
+**Why it is still open:** the remaining cause is not exposed by either protection API. Next
+steps are the merge-box text in the web UI (which names the unsatisfied requirement) or a
+GitHub Support ticket; `GET /orgs/journeyoflife-org/rulesets` cannot be interrogated on this
+plan. Treat any further "fix" to the ruleset as unproven until one of those two is seen —
+this session already changed one parameter on a correlation, which is how S1-005 got its
+wrong conclusion into the record.  
+**Evidence:** `gh api repos/journeyoflife-org/.github/pulls/9 --jq
+'"mergeable=" + (.mergeable|tostring) + " state=" + .mergeable_state'` →
+`mergeable=true state=blocked`; `gh pr checks 9` →
+`Validate Reusable Workflow References pass`; ruleset read-back
+`extra_approval=true codeowner=false count=0`, rule types
+`deletion,non_fast_forward,required_linear_history,required_signatures,pull_request,update`
+all present.  
+**Files affected:** `journeyoflife-org/.github` ruleset `protect-main` (id 22978013), not
+declared in Terraform
 
 ---
 
