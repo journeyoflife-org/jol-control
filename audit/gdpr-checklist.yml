@@ -4,13 +4,18 @@
 # Mapped to jol-control enforcement points.
 # Platform: 400K websites, 27 EU member states
 # Review cadence: Quarterly
-# Last reviewed: 2026-09-30
+# Last reviewed: 2026-10-15
 # ──────────────────────────────────────────────────────────────────────────────
 
 framework: "GDPR"
 version: "Regulation (EU) 2016/679"
 owner: "platform-admins"
-dpo_contact: "dpo@journeyoflife.org"
+# Was dpo@journeyoflife.org — verified undeliverable on 2026-10-15: that domain has
+# a null MX record (`MX 0 .`, RFC 7505) and its nameservers are afternic parking,
+# so it accepts no mail at all. See policy/contact-channels.yml and
+# docs/drift-findings.md S1-003. This is a plus-addressed alias of the owner's
+# single mailbox: role-labelled triage, NOT an independent DPO function.
+dpo_contact: "journey4oflife+jol.privacy@gmail.com"
 
 articles:
   Art5:

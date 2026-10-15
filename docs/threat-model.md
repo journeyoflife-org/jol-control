@@ -47,6 +47,7 @@ STRIDE (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Serv
 | T-10 | Tampering | Rogue Terraform destroy | Critical | `prevent_destroy = true` lifecycle | `github_repository` lifecycle |
 | T-11 | Elevation | Unauthorized team membership changes | High | Org-level 2FA + audit log monitoring | GitHub org settings |
 | T-12 | Info Disclosure | Supply chain attack via dependencies | High | Dependency review + Dependabot | `dependency_scan` gate |
+| T-13 | Availability | Published security/DPO contacts are undeliverable — every `@journeyoflife.org` and `@journeyoflife.lt` address in the fleet points at a null-MX or non-resolving domain, so vulnerability reports and data-subject requests bounce silently | High | Interim: GitHub private vulnerability reporting as first channel plus reachable role aliases; permanent: MX on journeyoflife.eu | `policy/contact-channels.yml`, S1-003 |
 
 ## Risk Acceptance Register
 
@@ -55,3 +56,4 @@ STRIDE (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Serv
 | RA-01 | All repos public (including governance) | Accepted by owner | 2026-09-24 | 2026-12-24 |
 | RA-02 | GitHub Free (no Advanced Security) | Current constraint | 2026-09-24 | 2027-01-01 |
 | RA-03 | Local Terraform state (no remote backend, no locking) | Accepted until HCP Terraform migration | 2026-09-26 | 2027-03-26 |
+| RA-04 | Role contacts published as plus-addressed aliases of one personal mailbox — the base address is recoverable from any alias, and the base address is also the GitHub account login email, so a public alias is a phishing lure aimed at org ownership | Accepted because the only alternative today is an undeliverable contact (see T-13, S1-003); the base address is already public via `gh api user/emails` (`visibility=public`) and is the author of every commit in the fleet, so the marginal disclosure is small. Withdraw when MX exists on journeyoflife.eu | 2026-10-15 | 2027-01-15 |

@@ -1,0 +1,247 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# JOL Contact Channels — authoritative role → address mapping for journeyoflife-org
+# ──────────────────────────────────────────────────────────────────────────────
+# Owner:      journeyoflife-org/platform-admins
+# Compliance: GDPR Art. 30 · Art. 38 · ISO 27001:2022 A.5.10, A.6.15 · SOC 2 CC7.3, CC8.1
+# Review:     Quarterly or on material change
+# ──────────────────────────────────────────────────────────────────────────────
+# THIS REPOSITORY IS PUBLIC AND ALL 40 MANAGED REPOSITORIES ARE PUBLIC. Every
+# string written into this tree is published to the internet and cannot be
+# removed afterwards, because it persists in git history (force-push is blocked
+# and history is linear). Treat every address choice here as permanent.
+#
+# SCOPE LIMIT: this file describes ONE organization. The cross-organization
+# identity matrix (which mailbox owns which org, keys, recovery paths) must NOT
+# be recorded here or in any org tree — it belongs outside all three trees under
+# restricted file mode.
+# ──────────────────────────────────────────────────────────────────────────────
+
+metadata:
+  version: "1.0.0"
+  last_reviewed: "2026-10-15"
+  next_review: "2027-01-15"
+  owner: "platform-admins"
+  approved_by: "Gintaras Kazlauskas"
+
+organization:
+  github_org: "journeyoflife-org"
+  product_domain: "journeyoflife.eu"
+  mailbox: "journey4oflife@gmail.com"
+
+# ── What these addresses are, and are not ────────────────────────────────────
+# Each role address is a Gmail PLUS-ALIAS of ONE mailbox. They deliver to the
+# same inbox, are read by the same person, and are recovered by the same
+# password + 2FA. They therefore provide:
+#   ✔ filtering and triage        (which role a message concerns, auditable)
+#   ✔ a per-role mail rule target  (SLA clocks, incident retention)
+#   ✘ segregation of duties        (one human controls every channel)
+#   ✘ an independent failure domain (mailbox compromise or lockout takes all roles)
+#   ✘ pseudonymity                 (see leakage note below)
+# Any compliance claim resting on "separate contacts" must be written as
+# role-labelled triage, never as separation.
+nature: "plus-addressed aliases of a single mailbox — triage labels, not isolation"
+
+leakage:
+  # A plus-alias literally contains the base address: stripping "+jol.security"
+  # yields journey4oflife@gmail.com. Publishing any alias therefore publishes the
+  # base address, which is ALSO the GitHub account login email and is already
+  # public (gh api user/emails → visibility=public) and the author email of every
+  # commit in the fleet. The marginal disclosure is therefore near zero, but it is
+  # NOT zero: an attacker learns a confirmed-live address plus the owner's role
+  # layout, which is a high-quality phishing lure aimed at org ownership.
+  base_address_recoverable_from_any_alias: true
+  accepted_tradeoff: true
+  risk_acceptance_id: "RA-04"
+  rationale: >
+    The alternative is no reachable contact at all. As verified 2026-10-15, every
+    domain mailbox currently published across the fleet is undeliverable
+    (see docs/drift-findings.md S1-003), so an alias that actually delivers beats
+    a role address that hard-bounces. Revisit when MX exists on journeyoflife.eu.
+
+# ── Role channels ────────────────────────────────────────────────────────────
+# plane: admin  = GitHub-internal / owner-visible only. Never written into a
+#                 public file.
+#        public = may be published in repository contact surfaces.
+channels:
+  dev:
+    address: "journey4oflife+jol.dev@gmail.com"
+    plane: "admin"
+    publishable: false
+    use: >
+      Day-to-day project communication mail, filtered by role. NOT the git author
+      identity — see identity_migration. Attribution and mail triage are separate
+      problems and the alias only solves the second one.
+    status: "in use as a mail filter; not verified on GitHub and does not need to be"
+
+  github:
+    address: "journey4oflife+jol.github@gmail.com"
+    plane: "admin"
+    publishable: false
+    use: "GitHub organization owner contact, PAT/credential notifications"
+    never_publish: true
+
+  billing:
+    address: "journey4oflife+jol.billing@gmail.com"
+    plane: "admin"
+    publishable: false
+    use: "Invoice notifications, payment-method and renewal notices"
+    targets:
+      - "GitHub organization billing_email (journeyoflife-org)"
+    never_publish: true
+
+  security:
+    address: "journey4oflife+jol.security@gmail.com"
+    plane: "public"
+    publishable: true
+    use: "Vulnerability reports, incident response escalation"
+    ordering: >
+      In SECURITY.md this address is the SECOND channel. The FIRST channel is
+      GitHub private vulnerability reporting, which needs no mail infrastructure,
+      is tracked as an advisory with a CVE and a disclosure clock, and cannot
+      silently bounce. Status: enabled on 40/40 public repositories on 2026-10-15
+      and confirmed by read-back, so SECURITY.md may now cite it. Re-verify with
+      `gh api repos/journeyoflife-org/<repo>/private-vulnerability-reporting` after
+      any new repository is created — it is not enabled automatically, and the
+      enable verb is PUT, not PATCH (see docs/drift-findings.md S1-003).
+
+  privacy:
+    address: "journey4oflife+jol.privacy@gmail.com"
+    plane: "public"
+    publishable: true
+    use: >
+      GDPR data-subject requests (Art. 15-22) and the DPO / DPIA contact point.
+    must_be_email: >
+      A data subject cannot be required to open a GitHub advisory to exercise a
+      statutory right, so the Art. 38(1)(a)/Art. 30(1) contact must remain a real
+      email address. This is the one channel that cannot be replaced by a GitHub
+      form while the organization has no domain mail.
+
+# ── Git identity migration ───────────────────────────────────────────────────
+# Rule: attribution and mail triage are two different problems. `git config --global
+# user.email` must NOT be used for either, on a host that carries three organizations:
+# global is the fallback for every path that lacks a scoped block, so a global change
+# silently rewrites authorship in the other estates — including /opt/jolarca/, which is
+# PCI-DSS scope. Scope per tree with includeIf + ~/.gitconfig.d/<estate>, and use the
+# GitHub ID-prefixed noreply address for authorship rather than a role alias, because a
+# plus-alias permanently publishes the base mailbox name in every commit object. NOTE:
+# the noreply address is the right destination but is NOT usable yet — a commit authored
+# by it is refused by required_signatures until the address is added and verified under
+# Settings -> Emails. Until then this estate must author as the verified base address.
+identity_migration:
+  decision_2026_10_15: "author identity stays journey4oflife@gmail.com — the only address that can push; noreply and role aliases both require a UI-only verification first"
+  rule_measured_not_inferred: >
+    GitHub verifies a signature only when the commit author address is a VERIFIED EMAIL ON
+    THE ACCOUNT THAT OWNS THE SIGNING KEY. A/B on one host, same key, same repo, same
+    protection: author=journey4oflife@gmail.com pushes and verifies; author=<ID>+JourneyOfLife@
+    users.noreply.github.com is refused with 'GH006: Protected branch update failed' /
+    'Commits must have verified signatures' because that address is absent from
+    `gh api user/emails`. Under required_signatures + enforce_admins this is a push refusal,
+    not a yellow badge.
+  proof_signed_noreply_verifies: >
+    RETRACTED. The sample cited for this (jol-devops@3c8f9dcf, noreply author, has_sig=true,
+    reason=valid) is GitHub's own web-UI 'Initial commit' — its verification payload reads
+    'committer GitHub <noreply@github.com>'. GitHub signed its own commit; it proves nothing
+    about a user-key signature over a noreply-authored commit. Lesson recorded in
+    docs/drift-findings.md S2-005 Update 2: read `committer` and the subject before counting
+    a commit as a sample, and never treat verified=true as evidence about the user's key.
+  refuted_claim: >
+    RETRACTED — the claim was correct. ~/.gitconfig.d/jolarca states a noreply author shows
+    verification.reason = bad_email until the address is added under Settings -> Emails. That
+    is what the GH006 refusal demonstrates. Do not treat the ID-prefixed noreply address as
+    automatically usable for authorship on signature-enforcing branches.
+  applied_state:
+    jol_tree: "~/.gitconfig.d/jol = journey4oflife@gmail.com with the measured reasoning written into the file, mode 600, includeif.gitdir:/opt/jol/ active"
+    jolarca_tree: "~/.gitconfig.d/jolarca = the noreply address (owned by the jolarca-dev control plane). WARNING: that estate holds ~67 commits on no remote; if any jolarca-dev branch enforces required_signatures those pushes are refused the same way. Check gh api repos/jolarca-dev/<repo>/branches/main/protection --jq .required_signatures first, or revert it to a verified address."
+    viavitae_tree: "~/.gitconfig.d/viavitae = architects@via-vitae.com, unchanged since 2026-10-09"
+    global_fallback: "journey4oflife@gmail.com — the only verified address on the account, deliberately left working so an unmatched path still produces pushable commits"
+    isolation_verified: "git config --list --show-origin inside each estate names exactly one include file; the /opt/jol/ pattern does not match /opt/jolarca/"
+    signing: "unchanged — GPG key 609F7926A8254CDB with commit.gpgsign=true"
+  disclosure_position: >
+    The argument for leaving the base mailbox out of commit metadata is still sound, and the
+    noreply form is the right destination. It is simply unavailable until the address is added
+    and verified under github.com/settings/emails — UI-only, because POST /user/emails returns
+    404 for token auth. Meanwhile the base address is already published in every existing
+    commit of the fleet and public on the profile, so continuing to use it adds no new exposure.
+  known_exception: "jol-hub carries a repository-local user.email = journey4oflife@gmail.com that outranks the include; harmless while the two agree, but it will silently override a future per-estate change"
+  account_traps:
+    active_account: "two gh accounts are authenticated here (JourneyOfLife, IterVitae) and the active one changes silently. An org-2FA 403 on an org resource describes WHICH ACCOUNT you are on, not the resource: check `gh api user --jq .login` first; recover with `gh auth switch -h github.com -u JourneyOfLife`"
+    non_compliant_member: "IterVitae is refused by journeyoflife-org's secure-2FA requirement; any automation running as it fails with a misleading message"
+    email_routes_removed: "POST /user/emails answers 404 even with the user:email scope, so account addresses cannot be managed by any automation on this host"
+    gpg_key_read_blocked: "GET /user/gpg_keys needs the admin:gpg_key scope, which this token lacks — key registration can only be inferred from commits that verified, not read directly"
+  local_commit_limits: "gh api …/commits/HEAD reports the PUSHED ref, so a local commit can never be verification-tested; the refusal only appears at push time, in GH006. Undo a probe with git reset --mixed, never --hard on a dirty tree."
+  finding: "docs/drift-findings.md S2-005"
+
+# ── Publication rules for the fleet sweep ────────────────────────────────────
+contact_surface_rules:
+  publish_in_public_files:
+    - "security channel (as second contact, after private vulnerability reporting)"
+    - "privacy channel (DPO / data-subject contact)"
+  never_publish:
+    - "the bare mailbox journey4oflife@gmail.com"
+    - "the dev channel"
+    - "the github channel"
+    - "the billing channel"
+  placeholders_stay_placeholders: >
+    `your.email@…`, `your-email@…` and `noreply@…` occurrences in documentation
+    and pyproject metadata are templates, not contacts. They must not be replaced
+    with a live address, or the fleet starts collecting real mail from forks.
+  evidence_artifacts_are_immutable: >
+    Never rewrite captured artifacts that record historical authorship — e.g.
+    jol-infrastructure/docs/compliance/evidence/retirement-jol-frontend-platform-20260911/{source-commit.txt,dangling-commit.txt,*.patch}.
+    Editing them to change an email is fabricating audit evidence (AGENTS.md §6).
+    Generated scanner output (*.sarif.json, *.egg-info/PKG-INFO) is corrected by
+    regenerating it, never by hand-editing.
+
+# ── Known-dead addresses (verified 2026-10-15 via dig) ────────────────────────
+# Fleet scope of the correction: 74 files across 27 repositories (including the
+# org-wide `.github` defaults repo), excluding obsidian (a personal vault, not a
+# managed repository).
+# Any contact string in this fleet pointing at these domains is unreachable and
+# must be replaced per the rules above rather than left in place.
+unreachable_domains:
+  journeyoflife.org:
+    reason: "MX 0 . (RFC 7505 null MX — domain disavows mail); NS ns3/ns4.afternic.com, i.e. parked for sale"
+    occurrence_count: 112
+    placeholder_count: 9        # your.email@ / your-email@ / noreply@ — templates, not contacts
+    real_contact_claims: 103
+    roles_observed:
+      - security
+      - dpo
+      - privacy
+      - conduct
+      - engineering
+      - dev
+      - platform
+      - ops
+      - ciso
+      - compliance
+      - alertmanager
+      - admin
+      - infra
+      - incident
+      - errors
+      - api
+      - noreply
+  journeyoflife.eu:
+    reason: "no MX record; NS horizon/orbit.dns-parking.com, i.e. parked"
+    occurrence_count: 0
+    remediation: >
+      Intended home for real role mailboxes. Nothing to correct today — the
+      product domain is not published as a mail contact anywhere — but it needs a
+      mail host plus MX and SPF before any @journeyoflife.eu address may be
+      published.
+  journeyoflife.lt:
+    reason: "no NS records; domain does not resolve"
+    occurrence_count: 5
+    note: "published only in jol-core (SECURITY.md ×4, CODE_OF_CONDUCT.md ×1)"
+
+# ── Terraform coverage gap ───────────────────────────────────────────────────
+# No github_organization resource exists in this control plane (org-settings.tf
+# manages only github_organization_webhook), so organization-level email settings
+# are not declared and cannot be drifted-checked. The billing_email change is
+# currently applied out of band with gh api. Bringing it under Terraform is an
+# infrastructure change and needs an ADR in jol-docs first (see CONTRIBUTING.md).
+terraform_managed: false
+out_of_band_settings:
+  - "organization billing_email"
+  - "organization member 2FA requirement (not manageable via API or Terraform)"
