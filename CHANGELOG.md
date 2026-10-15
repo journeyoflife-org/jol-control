@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   journeyoflife-org --json name,visibility`: the operator-token view (41 rows, one
   PRIVATE) and the `secrets.GITHUB_TOKEN` view reconstructed from the log of failed run
   37107745958 (39 rows, no private repository visible at all)
+- `scripts/validate_agents_table.py` + `tests/test_agents_gate.py` (9 cases) +
+  `make agents-gate` — AGENTS.md section 2 is what an agent reads before trusting any claim
+  about this organization, and it was checked by nobody. Documentation-only commits are
+  excluded from `apply.yml`'s `paths:` filter by design, so a malformed row could sit on
+  `main` with no CI signal; the gate is therefore wired into `compliance-scan.yml`, which
+  runs on every pull request and weekly. It requires three non-empty cells per row and a
+  non-empty evidence cell, treats escaped `\|` as content rather than a separator, and fails
+  closed: 0 pass / 1 violation / 2 cannot-check, with a missing header, a missing section, an
+  unreadable file and a no-argument invocation all reporting UNEVALUATED rather than success.
+  Fixtures are a verbatim capture of the live section and the broken variants are derived from
+  it by mutation, reproducing the mistakes an editor actually makes — an unescaped pipe that
+  silently adds a cell, a blank evidence column, a header-only table
 - `policy/contact-channels.yml` — authoritative role → address mapping for
   journeyoflife-org (`dev`, `github`, `billing`, `security`, `privacy`). Splits the
   channels into an **admin plane** (billing/github/dev — GitHub-internal, never

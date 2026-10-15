@@ -38,6 +38,19 @@ jobs:
         # a stub, so it needs no credentials and cannot be skipped into silence.
         run: python3 tests/test_drift_gate.py
 
+      - name: Enforcement-Table Gate (AGENTS.md section 2)
+        # AGENTS.md section 2 is what an agent reads before trusting any claim about this
+        # organization, and documentation-only commits are excluded from apply.yml's paths
+        # filter by design — so without this step a malformed row could sit on main
+        # unchecked. This workflow runs on every pull request and weekly, which covers both.
+        run: python3 scripts/validate_agents_table.py AGENTS.md
+
+      - name: Enforcement-Table Gate Self-Test (prove that gate is not inert)
+        # 9 cases replaying a real captured copy of the table against mutations that
+        # reproduce the mistakes an editor actually makes: an unescaped pipe that adds a
+        # cell, a blank evidence column, a header-only table, a missing section.
+        run: python3 tests/test_agents_gate.py
+
   policy-compliance:
     name: "Policy Compliance Check"
     needs: validate-repos

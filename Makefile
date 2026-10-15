@@ -18,10 +18,14 @@ validate: ## Validate all repo YAML definitions
 compliance: ## Run full compliance check
 	python3 scripts/compliance_check.py
 
-test: ## Run gate self-tests (plan gate + state gate + drift gate, no pytest required)
+test: ## Run gate self-tests (plan gate + state gate + drift gate + agents-table gate, no pytest required)
 	python3 tests/test_plan_gate.py
 	bash tests/test_state_gate.sh
 	python3 tests/test_drift_gate.py
+	python3 tests/test_agents_gate.py
+
+agents-gate: ## STOP gate — is AGENTS.md section 2 still a well-formed table with evidence per row
+	python3 scripts/validate_agents_table.py AGENTS.md
 
 # ── Terraform ────────────────────────────────────────────────────────────────
 init: ## Initialize Terraform

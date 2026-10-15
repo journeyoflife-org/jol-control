@@ -1,0 +1,25 @@
+# Captured verbatim from AGENTS.md on 2026-10-16 (real content, not a hand-written sample).
+# Fixture for tests/test_agents_gate.py: the enforcement-truth table as it exists on main.
+
+## 2. Current enforcement truth (verified — do not re-derive false beliefs)
+
+| Statement | Reality | Evidence |
+|---|---|---|
+| "2 reviewers + CODEOWNERS protect main" | **Not enforced.** `solo_mode = true` | `terraform.tfvars:17`; `branch-protection.tf:39,53` omit the blocks |
+| "Squash-merge only" | **False.** Merge commits disabled, squash *and* rebase enabled | `allow_merge_commit=false`, `allow_squash_merge=true`, `allow_rebase_merge=true` |
+| "CI applies changes dev→staging→prod" | **Proven broken, now gated off.** Both runs failed (empty-state plan `120 to add`, then `403`). Apply jobs now require `vars.TF_REMOTE_STATE_ENABLED == 'true'` | `apply.yml` run history and job `if:` conditions; `main.tf:138-148` |
+| "Production apply requires manual approval" | **False.** No `production` environment exists; `dev` and `staging` have zero `protection_rules` | GitHub environments API; `audit/soc2-checklist.yml` CC8.1-04 is now `not_implemented` |
+| "Required checks ci / lint, ci / test, codeql-analysis" | **Not emitted by this repo.** GitHub reports bare job names here: `Dev — Validate`, `Staging — Apply`, `Production — Apply` | Live check-runs API; `.github/workflows/` holds only plan.yml, apply.yml, compliance-scan.yml |
+| "Plan-only, no apply authority" | **False locally.** `make apply` applies on this host (now behind `plan-gate`); only CI's apply jobs are gated off | `Makefile` apply target; `apply.yml` job `if:` conditions |
+| "Targeted applies (-target) are the convention" | **False.** No `-target` usage anywhere in this repo | grep across `*.tf`, `Makefile`, `*.yml` |
+| "CI drift detection verifies the whole allow-list" | **Cannot verify.** In CI `scripts/drift_detect.py` runs with `secrets.GITHUB_TOKEN`, which enumerates only **public** repositories, so the fleet's one private repo (`jol-dr`) is invisible. The checker now reports that as UNEVALUATED (exit 2) instead of DRIFT — but it still cannot evaluate there. `make drift` on this host is the verifying run | Failed run 37107745958 (`in_defined_not_github: ["jol-dr"]` while `make drift` said `NO DRIFT — All 40 repos match`); `gh api repos/journeyoflife-org/jol-dr` → `visibility=PRIVATE`; `tests/test_drift_gate.py` fixture `ci_github_actions_token.json` |
+| "The org defaults repo is governed like the rest of the fleet" | **False.** `journeyoflife-org/.github` is absent from the allow-list (41 live repositories, 40 declared — the delta is exactly `.github`), and its `main` is guarded by a hand-configured ruleset that no Terraform resource manages, so neither `make drift` nor any plan can see either fact. Rulesets are deliberately outside the baseline (`branch-protection.tf:119-122`), so this is an accepted deferral rather than an oversight — but the pointer that deferral gives, `docs/runbooks.md` RB-04, is "Update Compliance Gate" and says nothing about rulesets | `gh api "orgs/journeyoflife-org/repos?per_page=100" --jq 'length'` = 41 vs `ls repos/*.yml \| wc -l` = 40; `gh api repos/journeyoflife-org/.github/rulesets` → `protect-main` (id 22978013); `grep -rn ruleset *.tf` finds only the two comment lines |
+| "Pull requests to `.github` merge normally" | **False, and the reason is unknown.** Three PRs on 2026-10-15 each needed `--admin`. Eight hypotheses were eliminated — failing checks, the code-owner requirement, required approvals (count is 0), required status checks (`update` carries no parameters), signatures, commit attribution, branch freshness, `require_extra_approval_for_unattributed_changes` — and a PR still reports `mergeable=true, mergeable_state=blocked`. **Do not state that code-owner review caused it; that claim was made and retracted** | `docs/drift-findings.md` S1-007 (elimination table); `gh api repos/journeyoflife-org/.github/pulls/<n> --jq .mergeable_state` |
+| "The shared CI library protects the fleet" | **Partly false until 2026-10-15.** Three library workflows filtered `push:` by path but left `pull_request:` unfiltered, so application scanners ran in this docs-only definition repository and failed nine checks on every PR; and ten spokes called `compliance-check.yml` as a reusable workflow although it never declared `workflow_call`, so that compliance gate ran for nobody. Fixed in `.github` PR #9; consumer-side proof still owed | `docs/drift-findings.md` S1-006; run logs 38805059782 and 38805059669; `grep -rl compliance-check.yml@main` over the fleet |
+
+Still genuinely enforced, **on the Terraform-managed repositories**: signed commits, linear
+history, no force-push, no branch deletion, and `prevent_destroy` on `github_repository`
+and `github_branch_protection`. `.github` is the exception on two counts — unmanaged
+(see above) and not mergeable without a bypass — so no claim about change management in
+this organization is complete until S1-007 is closed.
+
