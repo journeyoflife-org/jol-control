@@ -123,12 +123,24 @@ channels:
 # silently rewrites authorship in the other estates — including /opt/jolarca/, which is
 # PCI-DSS scope. Scope per tree with includeIf + ~/.gitconfig.d/<estate>, and use the
 # GitHub ID-prefixed noreply address for authorship rather than a role alias, because a
-# plus-alias permanently publishes the base mailbox name in every commit object. NOTE:
-# the noreply address is the right destination but is NOT usable yet — a commit authored
-# by it is refused by required_signatures until the address is added and verified under
-# Settings -> Emails. Until then this estate must author as the verified base address.
+# plus-alias permanently publishes the base mailbox name in every commit object. TWO
+# CORRECTIONS measured the same day: (1) the noreply address cannot be used either until it
+# is a verified email on the account -- a commit authored by it is REFUSED at push by
+# required_signatures (GH006), not merely badged; (2) switching to it is therefore DECLINED
+# rather than deferred, because the base address is already published in 1,151 of the 1,341
+# commit objects in this estate across 40 public repositories, so the forward-only change
+# withdraws nothing. See measured_exposure below.
 identity_migration:
-  decision_2026_10_15: "author identity stays journey4oflife@gmail.com — the only address that can push; noreply and role aliases both require a UI-only verification first"
+  decision_2026_10_15: "author identity stays journey4oflife@gmail.com. The noreply switch is DECLINED, not deferred: it buys no privacy that is not already spent, and it costs the only identity that can push."
+  measured_exposure: >
+    Counted 2026-10-15 across /opt/jol/repos: 1,151 of 1,341 commit objects are authored
+    by journey4oflife@gmail.com, in an organization where 40 of 41 repositories are public
+    (gh api orgs/journeyoflife-org/repos grouped by visibility -> 40 public, 1 private), the
+    same address is the public profile field (gh api user -> email), and it is the UID of the
+    signing key. Changing the author field going forward removes none of that; withdrawing it
+    entirely needs a history rewrite, which signed commits + linear history + no force-push
+    forbid by design. So the residual privacy gain of the noreply form is approximately zero
+    while its risk is a demonstrated estate-wide push lockout (GH006, measured the same day).
   rule_measured_not_inferred: >
     GitHub verifies a signature only when the commit author address is a VERIFIED EMAIL ON
     THE ACCOUNT THAT OWNS THE SIGNING KEY. A/B on one host, same key, same repo, same
@@ -157,12 +169,14 @@ identity_migration:
     isolation_verified: "git config --list --show-origin inside each estate names exactly one include file; the /opt/jol/ pattern does not match /opt/jolarca/"
     signing: "unchanged — GPG key 609F7926A8254CDB with commit.gpgsign=true"
   disclosure_position: >
-    The argument for leaving the base mailbox out of commit metadata is still sound, and the
-    noreply form is the right destination. It is simply unavailable until the address is added
-    and verified under github.com/settings/emails — UI-only, because POST /user/emails returns
-    404 for token auth. Meanwhile the base address is already published in every existing
-    commit of the fleet and public on the profile, so continuing to use it adds no new exposure.
-  known_exception: "jol-hub carries a repository-local user.email = journey4oflife@gmail.com that outranks the include; harmless while the two agree, but it will silently override a future per-estate change"
+    ACCEPTED AND PERMANENT, recorded as RA-05 in docs/threat-model.md. The base mailbox is
+    published in the history of the public fleet and on the account profile; no forward-only
+    identity change withdraws it. Revisit only if the fleet is ever mirrored elsewhere or the
+    profile field is hidden AND a history rewrite becomes acceptable -- neither is on the
+    table today. Reaching mail for researchers and data subjects is solved by private
+    vulnerability reporting (40/40 enabled) and the published role aliases, not by the
+    author field.
+  known_exception: "resolved 2026-10-15: jol-hub was the one repository carrying local user.* keys (user.name=jol and a user.email that outranked the include). Both were unset; it now inherits Gintaras Kazlauskas <journey4oflife@gmail.com> and its 17 unpushed commits are untouched. A scan of all three estates found no other repo with a local user.* key."
   account_traps:
     active_account: "two gh accounts are authenticated here (JourneyOfLife, IterVitae) and the active one changes silently. An org-2FA 403 on an org resource describes WHICH ACCOUNT you are on, not the resource: check `gh api user --jq .login` first; recover with `gh auth switch -h github.com -u JourneyOfLife`"
     non_compliant_member: "IterVitae is refused by journeyoflife-org's secure-2FA requirement; any automation running as it fails with a misleading message"

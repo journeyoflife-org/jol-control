@@ -77,8 +77,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Applied out of band because this control plane declares no `github_organization`
   resource — adding one is an infrastructure change and needs an ADR in jol-docs
   first, so the setting is currently outside drift detection
+- `policy/contact-channels.yml` and `docs/drift-findings.md` S2-005: the noreply authorship
+  switch is **declined, not deferred**, and S2-005 is closed by decision. Measured exposure:
+  1,151 of 1,341 commit objects in the estate are authored by the base mailbox, across 40
+  public repositories, and the same address is the public profile field and the signing key's
+  UID — so a forward-only author-field change withdraws nothing, while the cost of trying it
+  was a demonstrated estate-wide push refusal. Recorded as accepted risk **RA-05**.
+- `docs/drift-findings.md`: the sibling-estate warning is replaced with a scan instead of a
+  hypothesis — `jolarca-docs` enforces `required_signatures` (its noreply pushes will be
+  refused), 9 other jolarca repositories do not (which is why 3 noreply commits already
+  pushed, each unverified), and `jolarca-dr` and `jolarca-consent` returned `404 Branch not
+  protected` at all.
 
 ### Fixed
+- `jol-hub` was the only repository on the host carrying local identity keys —
+  `user.name = jol` plus a `user.email` that outranked the estate include. Both unset, so it
+  now inherits `Gintaras Kazlauskas <journey4oflife@gmail.com>` like its siblings; its 17
+  unpushed commits are untouched. A scan of all three estates found no other local `user.*`
+  key, and a stray world-readable `~/.gitconfig.d/jol.tmp` left by an aborted switch attempt
+  was removed (the three estate files are mode 600).
 - Host git identity: `--global user.email` had been pointed at
   `journey4oflife+jol.dev@gmail.com` before that alias existed on the GitHub account, which
   would have made every new commit unattributable and — with `required_signatures` and

@@ -219,9 +219,9 @@ protections, consistent with S1-001's exclusion of private repos.
 ### S2-005: Git identity migration — neither a role alias nor the noreply address can author here until it is a verified account email
 
 **Discovered:** 2026-10-15  
-**Status:** OPEN as to the noreply identity (blocked on a UI-only step); the estate pushes as
-the verified base address. See Update 2 — the earlier claim that a signed noreply commit
-verifies was wrong and is retracted.  
+**Status:** CLOSED by decision, 2026-10-15 — the identity migration is **declined**, not
+deferred. The estate authors as `journey4oflife@gmail.com`, the only address that both
+verifies and pushes. See Update 2 for the retraction of this entry's own earlier conclusion.  
 **Finding:** The `+jol.*` scheme assumed the aliases could simply be added to the GitHub
 account. Two verified facts break that assumption. First, email addresses can no longer be
 managed with a token: `POST /user/emails` returns
@@ -371,14 +371,36 @@ disclosure argument for the noreply form is still real — it is simply not avai
 address is added under github.com/settings/emails (UI-only; `POST /user/emails` → 404 for
 tokens) and re-read as verified from the API. Note that the base mailbox is already published
 in every existing commit of the fleet and is public on the profile, so continuing to use it
-adds no new exposure; the noreply switch is a future improvement, not a live leak.
+adds no new exposure; the noreply switch was later **declined outright** — see *Resolution*
+below — but it was never a live leak.
 
+**Resolution — why the noreply switch was declined rather than queued.** Counted on this host:
+**1,151 of 1,341 commit objects** across `/opt/jol/repos` are authored by
+`journey4oflife@gmail.com`, in an organization where **40 of 41 repositories are public**
+(`gh api orgs/journeyoflife-org/repos` grouped by visibility), the same address is the
+account's **public profile field**, and it is the **UID of the signing key** itself. A
+forward-only author-field change withdraws none of that; only a history rewrite would, and
+signed commits + linear history + blocked force-push forbid it by design — those are the
+controls this repository exists to protect. So the residual privacy gain is approximately
+zero while the cost already measured is an estate-wide push lockout. Chasing it further would
+trade a working control for a cosmetic one. Recorded as accepted risk **RA-05**.
+
+What actually matters for reachability, and is done or pending: private vulnerability
+reporting enabled on 40/40 public repositories, `+jol.privacy` published as the DPO contact,
+`+jol.billing` as the organization billing address — none of which depends on the author
+field. The remaining real work is the 26-repo contact sweep in S1-003, which replaces
+deliverability-free addresses, not this one.  
 **Cross-estate consequence, needs the sibling session's attention:** `/opt/jolarca/` is still
 configured to author as the noreply address, and that estate holds roughly 67 commits on no
-remote. If any jolarca-dev branch enforces `required_signatures`, those pushes will be refused
-with the same GH006 and the session will look for the wrong cause. Confirm with
-`gh api repos/jolarca-dev/<repo>/branches/main/protection --jq .required_signatures` before
-attempting them, or revert that estate's identity the same way until the address is verified.
+remote. Scanned on this host, `required_signatures` on their `main` branches:
+**`jolarca-docs` enforces it** — pushes from that estate's noreply identity will be refused
+there with the same GH006 — while 9 other repositories do not enforce it (which is why 3
+noreply commits already pushed to `jolarca-control` succeeded, each carrying an unverified
+badge), and **`jolarca-dr` and `jolarca-consent` returned `404 Branch not protected` at all**,
+which in a PCI-scoped organization is the larger finding of the three. Their own
+`~/.gitconfig.d/jolarca` now carries this measurement. JourneyOfLife-org, for contrast,
+enforces signatures on `main` in every repository sampled (`jol-control`, `jol-core`,
+`jol-devops`).
 
 Applied: `~/.gitconfig.d/jol` rewritten to the noreply address with its rationale, mode 600,
 and `includeif.gitdir:/opt/jol/.path` re-enabled. *(This application was later reversed — see
