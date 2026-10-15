@@ -64,8 +64,13 @@ evidence that the allow-list matches the organization.
 ### S1-003: Every published contact address in the fleet is undeliverable — the domains take no mail
 
 **Discovered:** 2026-10-15  
-**Status:** OPEN — contact sweep still pending (26 repositories); **vulnerability intake
-is FIXED**: private vulnerability reporting enabled on 40/40 public repositories 2026-10-15  
+**Status:** OPEN — contact sweep in progress. **Vulnerability intake FIXED**
+(private vulnerability reporting enabled on 40/40 public repositories, 2026-10-15).
+**Org defaults FIXED** — `journeyoflife-org/.github` PR #7 rewrites `SECURITY.md`,
+`SUPPORT.md` and `CODE_OF_CONDUCT.md`; queue is the **24 repositories that ship their
+own `SECURITY.md`** with a dead address, because a repository file overrides the
+default. `jol-auth` is excluded from this pass: another session holds it on
+`remediation/batch-0-s1` with 39 uncommitted files.  
 **Finding:** Not state drift but the same class of defect as S2-002: configuration and
 documentation assert things that do not exist. 74 files across 27 repositories publish
 role mailboxes on three domains, and DNS says none of them can receive mail:
@@ -163,6 +168,82 @@ Occurrence counts from `grep -rEho "[A-Za-z0-9._%+-]+@journeyoflife\.(org|eu|lt)
 /opt/jol/repos` excluding generated scanner output and staging copies, 2026-10-15.  
 **Files affected:** `audit/gdpr-checklist.yml`, `policy/contact-channels.yml` (new),
 `docs/threat-model.md`, `docs/drift-findings.md`
+
+### S1-004: The published donation path is a domain-parking lander, and no donation endpoint exists anywhere in the fleet
+
+**Discovered:** 2026-10-15  
+**Status:** OPEN — owner decision required, deliberately not guessed  
+**Finding:** Three public surfaces advertise `https://journeyoflife.org/donate` as the way to
+support the mission: `.github/SUPPORT.md`, `.github/FUNDING.yml` (which GitHub renders as the
+organization's funding link on every repository) and
+`.github/ISSUE_TEMPLATE/config.yml`. The domain does not host the project:
+
+```
+curl https://journeyoflife.org/donate  -> 200, content-type text/html, 114 bytes:
+  <!DOCTYPE html><html><head><script>window.onload=function(){window.location.href="/lander"}</script></head></html>
+curl https://journeyoflife.eu/         -> <title>Parked Domain name on Hostinger DNS system
+dig NS journeyoflife.org               -> ns3.afternic.com / ns4.afternic.com   (registrar parking)
+dig MX journeyoflife.org               -> "0 ."                                  (null MX, RFC 7505)
+```
+
+A search of every repository under `/opt/jol/repos` for a real payment or donation endpoint
+(donorbox, buy-me-a-coffee, stripe pay links, paypal donate, librepay) returned **only**
+third-party notices inside `node_modules/` and `.venv/` metadata — no organization donation
+URL exists. So the link was never wired to anything, and both candidate domains are parked.
+**Impact:** donation intake is broken while being advertised, and donors who follow it land on
+a parking page that serves third-party advertising and links **under the organization's own
+name and path** — a phishing surface the organization does not control and cannot audit. For a
+charitable mission platform handling donor records described in its own `SECURITY.md` as
+PCI-DSS in scope, publishing a redirect into an uncontrolled ad lander is a reputational and
+fraud-exposure finding, not a cosmetic one. It also contradicts the `SUPPORT.md` framing that
+support is best-effort but the mission is real: a reporter or donor following a published link
+gets a page for sale.  
+**Why this was not fixed in the sweep:** inventing a replacement URL in a public file is worse
+than leaving a known-broken one. The correct destination — a hosted donate page, a payment
+provider URL, or removal of the link from `FUNDING.yml` until one exists — is an owner and
+finance decision.  
+**Remediation:** owner supplies the real donation endpoint (or authorizes removal of the
+link). Then change all three files together so the funding button, the support table and the
+issue-form sidebar cannot disagree, and re-curl to confirm the target returns the intended
+page rather than a redirect.  
+**Evidence:** `curl -s -L https://journeyoflife.org/donate`, `curl -s -L https://journeyoflife.eu/`,
+`dig +short NS/MX journeyoflife.org`, `grep` across `/opt/jol/repos` for payment-provider URL
+shapes (hits confined to vendored dependency metadata).  
+**Files affected:** `.github/SUPPORT.md`, `.github/FUNDING.yml`,
+`.github/ISSUE_TEMPLATE/config.yml` (all in `journeyoflife-org/.github`)
+
+### Measurement traps found while verifying S1-003 and S1-004
+
+Two of my own readings were wrong; both are recorded so the next operator does not repeat
+them, and neither changed the enforcement state of anything.
+
+1. **A `404 Branch not protected` does not mean unprotected.**
+   `GET /repos/journeyoflife-org/.github/branches/main/protection` returns 404, which reads as
+   "this repository has no protection". It does: an **active ruleset** named `protect-main`
+   (id 22978013) enforces `required_signatures`, `required_linear_history`, `deletion`,
+   `non_fast_forward`, `update`, and a `pull_request` rule with
+   `require_code_owner_review: true`, thread resolution and squash-only merges, with
+   `required_approving_review_count: 0`. Rulesets and legacy branch protection are separate
+   APIs and each is blind to the other, so the fleet must be audited through
+   `GET /repos/{owner}/{repo}/rulesets` as well as `…/branches/{branch}/protection`. The same
+   ruleset carries `bypass_actors: [{actor_type: RepositoryRole, actor_id: 5 (admin),
+   bypass_mode: always}]` and `current_user_can_bypass: always` — the single member bypasses
+   every rule, which is exactly the limitation `/.github/CHANGELOG.md` already declared on
+   2026-09-12.
+2. **Count state per resource, not per first match.** An earlier message from this session
+   claimed 11 branch protections in state against a documented 39. Wrong, and retracted: the
+   `github_branch_protection` resource appears **twice** (`governance` = 11 instances,
+   `standard` = 28), total **39**, with 40 `github_repository` instances — consistent with
+   S1-001 excluding the private repo. `AGENTS.md` was right; the number in this register was
+   never in error. A loop that prints one summary line per matching entry and is read as a
+   single total produces this mistake.
+3. **Never feed text containing backticks through an unquoted heredoc.** Writing the
+   `.github/CHANGELOG.md` entry with `<<PY` instead of `<<'PY'` let bash execute every
+   `` `code span` `` as a command substitution: the pushed entry lost all file names and
+   domains and read "lives on , which has a null MX record (, RFC 7505)". Detected by reading
+   the file after the write rather than trusting the "inserted" message; repaired in commit
+   `4f06ed1` on the PR branch. Any generator that writes markdown must use a quoted delimiter
+   and then assert backtick balance and the presence of expected literals.
 
 ---
 

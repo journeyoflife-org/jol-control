@@ -183,6 +183,16 @@ identity_migration:
     email_routes_removed: "POST /user/emails answers 404 even with the user:email scope, so account addresses cannot be managed by any automation on this host"
     gpg_key_read_blocked: "GET /user/gpg_keys needs the admin:gpg_key scope, which this token lacks — key registration can only be inferred from commits that verified, not read directly"
   local_commit_limits: "gh api …/commits/HEAD reports the PUSHED ref, so a local commit can never be verification-tested; the refusal only appears at push time, in GH006. Undo a probe with git reset --mixed, never --hard on a dirty tree."
+  enforcement_measured: >
+    Live on 2026-10-15, for the record rather than by inference — jol-control main:
+    required_signatures=true, enforce_admins=true, required_linear_history=true,
+    allow_force_pushes=false, allow_deletions=false, required_pull_request_reviews=ABSENT,
+    require_code_owner_reviews=ABSENT (solo_mode). journeyoflife-org/.github main is governed
+    instead by ruleset protect-main: signatures, linear history, deletion and force-push
+    blocked, pull_request with require_code_owner_review=true and
+    required_approving_review_count=0, squash-only, plus an always-on admin bypass — so the
+    org-defaults repo enforces signing while the Terraform-managed repos do not require
+    reviews. Check both APIs: each returns nothing for the other's mechanism.
   finding: "docs/drift-findings.md S2-005"
 
 # ── Publication rules for the fleet sweep ────────────────────────────────────
@@ -205,6 +215,32 @@ contact_surface_rules:
     Editing them to change an email is fabricating audit evidence (AGENTS.md §6).
     Generated scanner output (*.sarif.json, *.egg-info/PKG-INFO) is corrected by
     regenerating it, never by hand-editing.
+
+# ── Role mapping for the fleet sweep ─────────────────────────────────────
+# Every address actually published somewhere in the estate, and what replaces it.
+# This exists so sweeping 24 more repositories is a mechanical lookup, not 24 more
+# judgement calls. Addresses absent from this table must NOT be substituted — raise
+# it as a question instead of inventing a channel.
+role_mapping:
+  security@journeyoflife.org: "→ journey4oflife+jol.security@gmail.com"
+  ciso@journeyoflife.org: "→ journey4oflife+jol.security@gmail.com — no separate CISO exists; an escalation address naming a role nobody holds is a fiction"
+  incident@journeyoflife.org: "→ journey4oflife+jol.security@gmail.com"
+  conduct@journeyoflife.org: "→ journey4oflife+jol.security@gmail.com — confidential intake, shared with vulnerability reports and separated by triage only"
+  conduct@journeyoflife.lt: "→ journey4oflife+jol.security@gmail.com — domain does not resolve at all"
+  security@journeyoflife.lt: "→ journey4oflife+jol.security@gmail.com — domain does not resolve at all (jol-core SECURITY.md ×4)"
+  dpo@journeyoflife.org: "→ journey4oflife+jol.privacy@gmail.com"
+  privacy@journeyoflife.org: "→ journey4oflife+jol.privacy@gmail.com"
+  engineering@journeyoflife.org: "→ 227570927+JourneyOfLife@users.noreply.github.com — package metadata (pyproject Author-email) is not a route to a human, and the noreply form avoids publishing a mailbox into an index"
+  dev@journeyoflife.org: "→ 227570927+JourneyOfLife@users.noreply.github.com — same reason"
+  licensing_inquiry_bare_mailbox: "→ journey4oflife+jol.billing@gmail.com (jol-dr LICENSE, commercial enquiries)"
+  delete_do_not_replace:
+    - "compliance@journeyoflife.org — internal function; route through jol-compliance issues"
+    - "platform@, ops@, admin@, infra@, api@, errors@ — no channel and no named owner; publishing an address nobody reads is worse than none"
+    - "alertmanager@journeyoflife.org as smtp_from / smtp_auth_username, and the smtp.journeyoflife.org relay — not a contact at all; blocked on S1-003(d), remove the email receiver until alerting is built and proven"
+  leave_alone:
+    - "your.email@…, your-email@… — documentation placeholders in CONTRIBUTING/README, must stay fake"
+    - "noreply@… — bounce/sender addresses, not contacts"
+    - "anything inside *.sarif.json, *.egg-info/PKG-INFO, or docs/compliance/evidence/** — generated or captured, never hand-edited"
 
 # ── Known-dead addresses (verified 2026-10-15 via dig) ────────────────────────
 # Fleet scope of the correction: 74 files across 27 repositories (including the

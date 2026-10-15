@@ -57,6 +57,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of this entry's own earlier conclusion
 - `policy/contact-channels.yml` gained an `identity_migration` block: the order of
   operations, the two-authenticated-accounts hazard, and the host state as verified
+- `policy/contact-channels.yml` → `role_mapping` — every address actually published in the
+  estate with its replacement or an explicit `delete`/`leave alone` verdict, so sweeping the
+  remaining 24 repositories is a lookup rather than 24 fresh judgement calls. Addresses absent
+  from the table must raise a question, not an invented channel.
+- `docs/drift-findings.md` S1-004 + `docs/threat-model.md` T-14 — the advertised donation path
+  is a parked domain: `https://journeyoflife.org/donate` answers 200 with a 114-byte redirect to
+  `/lander` and `journeyoflife.eu` is Hostinger-parked, so donors reach a third-party ad page
+  served under the organization's own name. A fleet-wide search found **no** real donation
+  endpoint anywhere, and this change deliberately did not guess one — owner decision required
+- `docs/drift-findings.md` — a measurement-traps section recording that rulesets and legacy
+  branch protection are invisible to each other (`.github` main looks unprotected through the
+  legacy API but is enforced by ruleset `protect-main` with signatures, linear history, merge and
+  deletion blocks, code-owner review at zero required approvals, and an always-on admin bypass),
+  that `github_branch_protection` must be summed across both its state resources, and that an
+  unquoted heredoc silently executes backticked prose
 
 ### Changed
 - `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
@@ -90,6 +105,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- Two claims this session published and then retracted against better evidence: that
+  journeyoflife-org/.github had *no* branch protection (it has an active ruleset — the legacy
+  endpoint simply does not report rulesets), and that Terraform state held 11 branch
+  protections where the register says 39 (the resource appears twice: governance 11 + standard
+  28 = 39, with 40 repositories; AGENTS.md was right). Also repaired: a `.github/CHANGELOG.md`
+  entry whose backticked terms were executed by bash through an unquoted heredoc delimiter,
+  leaving sentences like "lives on , which has a null MX record" on a public branch — fixed in
+  `4f06ed1`, with a backtick-balance assertion added to the procedure.
+- `journeyoflife-org/.github` PR #7 replaces every undeliverable role address in the
+  organization-wide `SECURITY.md`, `SUPPORT.md` and `CODE_OF_CONDUCT.md` with channels that
+  actually deliver, orders private vulnerability reporting ahead of e-mail, and withdraws the
+  `SECURITY.md` claim that pull-request review and code-owner approval protect `main` — they are
+  configured, not enforced, while one maintainer holds the org.
 - `jol-hub` was the only repository on the host carrying local identity keys —
   `user.name = jol` plus a `user.email` that outranked the estate include. Both unset, so it
   now inherits `Gintaras Kazlauskas <journey4oflife@gmail.com>` like its siblings; its 17

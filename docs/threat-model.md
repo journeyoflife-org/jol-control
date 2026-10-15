@@ -48,6 +48,7 @@ STRIDE (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Serv
 | T-11 | Elevation | Unauthorized team membership changes | High | Org-level 2FA + audit log monitoring | GitHub org settings |
 | T-12 | Info Disclosure | Supply chain attack via dependencies | High | Dependency review + Dependabot | `dependency_scan` gate |
 | T-13 | Availability | Published security/DPO contacts are undeliverable — every `@journeyoflife.org` and `@journeyoflife.lt` address in the fleet points at a null-MX or non-resolving domain, so vulnerability reports and data-subject requests bounce silently | High | Interim: GitHub private vulnerability reporting as first channel plus reachable role aliases; permanent: MX on journeyoflife.eu | `policy/contact-channels.yml`, S1-003 |
+| T-14 | Fraud / Reputation | The advertised donation path (`SUPPORT.md`, `.github/FUNDING.yml`, issue-form sidebar) is `https://journeyoflife.org/donate` on a **parked** domain whose response is a 114-byte redirect to `/lander`: donors are sent to a registrar parking page serving third-party ads and links under the organization's own name, and no real donation endpoint exists anywhere in the estate | High | Owner must supply a verified endpoint or remove the link; all three files change together so the funding button, support table and sidebar cannot disagree, and the target is re-fetched to confirm it is not a redirect | S1-004 |
 
 ## Risk Acceptance Register
 
