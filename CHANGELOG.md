@@ -105,6 +105,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- `AGENTS.md` §2 now records what this session proved about `journeyoflife-org/.github`, so
+  the next session cannot re-derive the wrong version: the org defaults repository sits outside
+  the allow-list (41 live, 40 declared — the delta is `.github`) and is protected by a
+  hand-configured ruleset no Terraform resource manages; pull requests there need an
+  administrator bypass **for a reason nobody has identified**, with the eight eliminated
+  hypotheses listed and an explicit instruction not to repeat the retracted code-owner claim;
+  and the shared CI library scanned its own definition repository while one workflow was
+  uncallable-by-construction for ten spokes. The "still genuinely enforced" sentence is now
+  scoped to the Terraform-managed repositories, because `.github` is not one of them — an
+  unqualified version of that sentence is precisely the kind of claim §6 says gets the rest of
+  the pack discounted.
+- One new defect found while verifying a claim written minutes earlier:
+  `branch-protection.tf:122` defers rulesets to "`docs/runbooks.md` RB-04", but RB-04 is
+  *Update Compliance Gate* and says nothing about rulesets. Reported rather than edited — a
+  `.tf` comment is outside this commit's stated scope.
 - `.github` PR #9 (`4a94b30`) stops the shared workflow library from scanning the repository
   that only defines it, and makes `compliance-check.yml` callable. Three files filtered `push:`
   by path but left `pull_request:` unfiltered, so nine checks failed on every pull request to
