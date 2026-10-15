@@ -26,6 +26,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   journeyoflife-org --json name,visibility`: the operator-token view (41 rows, one
   PRIVATE) and the `secrets.GITHUB_TOKEN` view reconstructed from the log of failed run
   37107745958 (39 rows, no private repository visible at all)
+- `policy/contact-channels.yml` — authoritative role → address mapping for
+  journeyoflife-org (`dev`, `github`, `billing`, `security`, `privacy`). Splits the
+  channels into an **admin plane** (billing/github/dev — GitHub-internal, never
+  written into a public file) and a **public plane** (security/privacy — publishable,
+  because a data subject cannot exercise a statutory right through a GitHub
+  advisory). Records that all five are plus-addressed aliases of one mailbox and
+  therefore provide triage, not segregation of duties or an independent failure
+  domain; states which artifacts must never be edited (captured evidence, generated
+  scanner output, documentation placeholders); and notes that organization email
+  settings are not Terraform-managed.
+- `docs/drift-findings.md` S1-003 — every contact address published across the fleet
+  is undeliverable. `journeyoflife.org` has a **null MX** (`MX 0 .`, RFC 7505) on
+  afternic parking nameservers, `journeyoflife.eu` has no MX, `journeyoflife.lt` does
+  not resolve. 112 + 5 occurrences over 74 files in 27 repositories, including 28
+  `SECURITY.md` files directing researchers to a hard-bouncing address and
+  `jol-devops/monitoring/alertmanager/alertmanager.yaml` configuring an email receiver on
+  it (and `smtp.journeyoflife.org` resolving to the same domain-parking addresses as the
+  apex, i.e. no SMTP server). Private vulnerability reporting was also enabled on 0 of the
+  40 public repositories, so the organization had no working vulnerability intake at all —
+  see Fixed.
+- `docs/threat-model.md` T-13 (unreachable security/DPO contacts, Availability) and
+  risk acceptance **RA-04** for publishing role aliases while no domain mail exists
+- `docs/drift-findings.md` S2-005 — the git-identity half of the migration, recorded as it was
+  learned: `POST /user/emails` answers `404` even with the `user:email` scope so account
+  addresses are UI-only, `required_signatures` and `enforce_admins` are both live on `main`,
+  `--global` identity is the wrong scope on a three-organization host, and a commit authored
+  by an address that is not a verified email on the key's account is **refused at push**
+  (GH006), not merely unverified. Contains two same-day corrections, including the retraction
+  of this entry's own earlier conclusion
+- `policy/contact-channels.yml` gained an `identity_migration` block: the order of
+  operations, the two-authenticated-accounts hazard, and the host state as verified
 
 ### Changed
 - `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
@@ -35,8 +66,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/**`. Before this, a change to either gate could land with no CI run at all —
   an inert gate is worse than an absent one. The gate itself is not executed in CI: it
   judges local state, and CI has neither the state nor backend credentials
+- `audit/gdpr-checklist.yml`: `dpo_contact` `dpo@journeyoflife.org` →
+  `journey4oflife+jol.privacy@gmail.com`. The old value could not receive mail, so the
+  checklist was asserting an Art. 30/Art. 38 contact that an auditor would fail on
+  first test; the reason is now recorded inline rather than silently swapped
+- journeyoflife-org `billing_email` moved off the bare mailbox to
+  `journey4oflife+jol.billing@gmail.com` (verified by a fresh `gh api
+  orgs/journeyoflife-org` GET, not the PATCH echo; previous value
+  `journey4oflife@gmail.com`). Owner-visible only, never a published surface.
+  Applied out of band because this control plane declares no `github_organization`
+  resource — adding one is an infrastructure change and needs an ADR in jol-docs
+  first, so the setting is currently outside drift detection
 
 ### Fixed
+- Host git identity: `--global user.email` had been pointed at
+  `journey4oflife+jol.dev@gmail.com` before that alias existed on the GitHub account, which
+  would have made every new commit unattributable and — with `required_signatures` and
+  `enforce_admins` enforced on `main` — unpushable, while also reassigning the PCI-scoped
+  `/opt/jolarca/` tree to a church-project mailbox. Reverted to `journey4oflife@gmail.com`
+  and verified: `jol-control` and `jolarca` resolve to the verified address, `/opt/viavitae`
+  still resolves to `architects@via-vitae.com` through its includeIf. See S2-005.
+- Host git identity for `/opt/jol/` was moved to GitHub's ID-prefixed noreply address and
+  **reverted the same day after the push was refused**, which is how the rule was established
+  by measurement instead of assumption. Three signed commits authored by
+  `227570927+JourneyOfLife@users.noreply.github.com`, signed with the fleet's own
+  `609F7926A8254CDB`, produced
+  `GH006: Protected branch update failed … Commits must have verified signatures. Found 3
+  violations` on `main`. Same key, same repository, same protection, and the only difference
+  from the fleet's whole history is the author address — so GitHub verifies a signature only
+  when the author email is a **verified email on the account owning the key**, and the noreply
+  form is not in `gh api user/emails`. `~/.gitconfig.d/jol` now holds
+  `journey4oflife@gmail.com` with that reasoning written into the file, and the noreply switch
+  is recorded as a future improvement gated on a UI-only step (`POST /user/emails` → 404 for
+  tokens). Estate isolation is unchanged and verified: each of `/opt/jol`, `/opt/jolarca` and
+  `/opt/viavitae` names exactly one include file, and `/opt/jol/` does not match
+  `/opt/jolarca/`.
+- The per-tree `includeIf` migration went through an intermediate fail-safe state the same
+  day: the blocks were installed, withdrawn when `gh api user/emails` showed neither alias was
+  verified, then re-enabled once the noreply route removed that dependency. One empty probe
+  commit carrying the unverified alias was made on local `main` and unwound with
+  `git reset --mixed` — not `--hard`, which would have discarded the six uncommitted files in
+  the tree — with the dirty-file count and a file checksum confirmed afterwards.
+  `git rev-list --count origin/main..HEAD` stayed at `0`; nothing was ever pushed with the
+  alias.
+- Diagnosis recorded for a misleading failure: an org-2FA `403` on `gh api
+  orgs/journeyoflife-org` was not the organization locking anyone out. `gh` had switched the
+  active account to `IterVitae`, which is not compliant with the org's secure-2FA requirement.
+  Check `gh api user --jq .login` before believing any `403` about org resources; recovery is
+  `gh auth switch -h github.com -u JourneyOfLife`. JourneyOfLife reports
+  `two_factor_authentication = true` and the org reads fine again, with `billing_email` still
+  on the billing channel. Remaining roster issue: `IterVitae` must be made compliant or
+  removed from the organization.
+- A claim this session recorded as "refuted" is **retracted — it was correct**. GitHub does
+  require the noreply author address to be added and verified under Settings → Emails before a
+  signature over it verifies. The sample used to refute it (`jol-devops@3c8f9dcf`) is GitHub's
+  own web-ui `Initial commit`: its verification payload reads
+  `committer GitHub <noreply@github.com>`, so GitHub signed its own commit and it says nothing
+  about a user key. `has_sig=true` with `reason=valid` was not sufficient evidence, and reading
+  `committer` and the subject would have shown it. The jolarca-dev estate still authors as the
+  noreply address and holds roughly 67 commits on no remote; if any jolarca-dev branch
+  enforces `required_signatures`, those pushes meet the same refusal — recorded as a warning
+  in `policy/contact-channels.yml`.
+- Private vulnerability reporting is now enabled on **all 40 public repositories** in
+  journeyoflife-org, closing the intake hole recorded in S1-003 (it was enabled on none).
+  Two API traps are recorded in `docs/drift-findings.md` because they will recur: the verb
+  is `PUT`, not `PATCH` — `PATCH …/private-vulnerability-reporting` answers a generic 404
+  even with `permissions.admin = true`, with the preview header, and with a real JSON
+  boolean, so a 404 here means wrong verb rather than no permission; and the read-back is
+  cacheable (`Cache-Control: private, max-age=60`), so verifying immediately after a
+  `204 No Content` still returned `{"enabled": false}`. Confirmation requires a
+  cache-busted `GET` or waiting out the TTL — otherwise a change that landed looks like
+  one that was silently discarded.
 - `scripts/drift_detect.py`: the weekly Compliance Scan has failed since run 37107745958
   (2026-10-03) reporting `in_defined_not_github: ["jol-dr"]`. **Nothing is missing:**
   `jol-dr` exists with `visibility=PRIVATE` (`gh api repos/journeyoflife-org/jol-dr`),
@@ -56,6 +156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `make drift` on the control-plane host) instead of emitting the same generic failure
   as real drift; `validate-repos` runs the drift-gate self-test on every PR so the
   checker itself cannot go inert
+- `AGENTS.md`: STOP condition 7 cited "state records `jol-dr` as `public` while GitHub
+  reports it PRIVATE" as a *known live example*. That was reconciled by a `-refresh-only`
+  apply on 2026-09-30; state (serial 306) records `visibility = "private"` and holds no
+  branch protection for `jol-dr` — re-verified 2026-10-09 and reworded as history. Added a
+  row to the §2 enforcement-truth table: CI drift detection cannot see private repos, so
+  its verdict is UNEVALUATED, not a pass. Registered as S1-002 and S2-004 in
+  `docs/drift-findings.md`
 
 ## [1.1.3] - 2026-09-30
 
