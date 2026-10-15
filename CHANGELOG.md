@@ -38,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Fixtures are a verbatim capture of the live section and the broken variants are derived from
   it by mutation, reproducing the mistakes an editor actually makes — an unescaped pipe that
   silently adds a cell, a blank evidence column, a header-only table
+- `docs/runbooks.md` RB-06 — "Inspect or Change a Repository Ruleset", written from the
+  measurements taken while chasing the `.github` merge block: rulesets and classic branch
+  protection are separate APIs blind to each other (a `404` from one is not an absence of
+  protection), a ruleset `PUT` is a full replace so the current document must be snapshotted
+  first, required status checks live inside the `update` rule's parameters rather than as their
+  own rule type, and any verification read must be cache-busted because GitHub serves cached
+  reads for up to 60 seconds. It records the measured `protect-main` state, that organization
+  rulesets cannot even be listed on this plan, and an explicit instruction not to improvise a
+  cause for the unresolved block — toggles made while testing must be undone.
 - `policy/contact-channels.yml` — authoritative role → address mapping for
   journeyoflife-org (`dev`, `github`, `billing`, `security`, `privacy`). Splits the
   channels into an **admin plane** (billing/github/dev — GitHub-internal, never
@@ -117,6 +126,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- `branch-protection.tf` deferred rulesets to "`docs/runbooks.md` RB-04", but RB-04 is
+  *Update Compliance Gate* and says nothing about rulesets. It now points at the new RB-06 and
+  states the two facts an operator needs before touching that area: `.github` is guarded by a
+  hand-set ruleset no resource here manages, so neither `make drift` nor `terraform plan` can
+  see it, and the `404` from the classic protection endpoint means ruleset, not unprotected.
+  Comment-only change, verified inert: `terraform validate` Success, offline plan reports
+  `0 to add, 0 to change, 0 to destroy` and `plan-gate` PASSED. Separately observed and left
+  alone: `terraform fmt -check` flags `repositories.tf` as non-canonical, a pre-existing
+  deviation in a file this change does not touch, so `make fmt` would widen the diff.
 - `AGENTS.md` §2 now records what this session proved about `journeyoflife-org/.github`, so
   the next session cannot re-derive the wrong version: the org defaults repository sits outside
   the allow-list (41 live, 40 declared — the delta is `.github`) and is protected by a

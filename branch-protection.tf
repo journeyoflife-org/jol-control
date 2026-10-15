@@ -119,4 +119,9 @@ resource "github_branch_protection" "standard" {
 # NOTE: Release-tag protection (v* tags) is enforced via GitHub Rulesets, which
 # the integrations/github provider v6.x models as github_repository_ruleset.
 # Ruleset definitions are intentionally kept out of this baseline until the
-# org ruleset strategy is finalized (see docs/runbooks.md RB-04).
+# org ruleset strategy is finalized (see docs/runbooks.md RB-06, "Inspect or
+# Change a Repository Ruleset"). Until then any ruleset in use is out of band:
+# journeyoflife-org/.github is guarded by a hand-set ruleset that no resource
+# here manages, so neither `make drift` nor `terraform plan` can see it — and
+# `GET /repos/journeyoflife-org/.github/branches/main/protection` answers 404 for
+# it, which is a ruleset, not an absence of protection.
