@@ -94,8 +94,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deletion blocks, code-owner review at zero required approvals, and an always-on admin bypass),
   that `github_branch_protection` must be summed across both its state resources, and that an
   unquoted heredoc silently executes backticked prose
+- `docs/drift-findings.md` S1-009 — **seven governance-tier repositories have branch protection
+  in state and none on GitHub.** `terraform.tfstate` (serial 306) holds 39
+  `github_branch_protection` instances across 39 distinct repositories, but
+  `jol-compliance-evidence`, `jol-iac`, `jol-incident-response`, `jol-payments-scope`,
+  `jol-privacy`, `jol-secrets` and `jol-status` are empty (`size=0`, `409 Git Repository is
+  empty`), so `GET …/branches/main/protection` answers 404 there: 32 of 41 repositories are
+  protected live, and the governance tier's asserted posture (signed commits, linear history,
+  force-push and deletion blocks, `enforce_admins`) is in force on only 4 of its 11 members.
+  `make drift` cannot see any of this — `scripts/drift_detect.py` compares `name,visibility`
+  only. Discovered by refuting someone else's claim of a *duplicate* protection: the tier
+  partition in `branch-protection.tf:22,29` is disjoint by construction, and no repository is
+  covered twice
+- `docs/drift-findings.md` — measurement traps 6–8: a confident report that an action was taken
+  is not a measurement (six claims in one turn, every one contradicted by `gh pr view`,
+  `git cat-file` and a re-scan); a `Bearer`-token `curl` against `github.com` HTML cannot
+  discriminate token scope, because HTML answers 404 for a private repository even to a token
+  that reads it through the API; and a workflow run whose name matches a reusable workflow is
+  not proof that a caller resolved it (`jol-docs`' green `compliance-check` is its own file)
 
 ### Changed
+- `AGENTS.md` §2 re-measured 2026-10-19 and gained two rows: the ruleset figure is restated as
+  **20 active requirement-bearing rulesets across 19 repositories** (17 requiring ≥1 approving
+  review, 19 requiring code-owner review) out of 24 rulesets in the fleet, replacing the less
+  precise "21 rulesets across 19 of 40"; "governance-tier repositories have the strongest
+  protection" is recorded as false for 7 of 11 (S1-009); "the ruleset relaxation has been applied
+  and ADR-013 is accepted" is recorded as false, with the commands that decide it; and the shared
+  CI library row now states that consumer-side proof is still owed
+- `docs/drift-findings.md` S2-006 rescoped from a `jol-hub` defect to a fleet measurement: 41
+  repositories, 14 with `dependabot.yml`, 12 declaring `labels:`, **11 of those 12 referencing
+  labels that do not exist**. Severity stays S2 (triage routing, not a control), and the entry now
+  names the real problem: there is no authoritative label vocabulary anywhere — `GET
+  /orgs/journeyoflife-org/labels` answers `404` on this plan and no file in `jol-control` declares
+  one — so "create them in all eleven" would be eleven more out-of-band mutations
+- `docs/drift-findings.md` S1-008 records the withdrawal of the relax-first ordering this register
+  previously recommended, and re-measures the collision with S1-003: still exactly **13 of the 24**
+  repositories with a dead published address, leaving **11 sweepable without an admin bypass**
 - `make plan-gate` now depends on `make state-gate`, so `make apply` is behind two
   gates instead of one; `make test` runs the state-gate suite alongside plan-gate
 - `.github/workflows/apply.yml`: `dev-validate` now runs `bash tests/test_state_gate.sh`
@@ -127,6 +161,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- ADR-013 (`jol-docs#4`) revised twice before acceptance, both times because verification caught
+  the draft rather than a reviewer: **v0.2.0** conformed the heading to the registry's short-title
+  style after CI run 39028870034 failed `markdownlint` MD013 on a 123-character sentence heading
+  (local checks had only measured file size and link resolution), and reversed the Ordering
+  decision from relax-then-accept to **accept-then-relax** — the draft contradicted S1-008 in this
+  repository, and removing a review control should be authorised by the decision record instead of
+  documented after the fact. **v0.3.0** re-measured the evidence after reports claimed the
+  relaxation was already applied: it was not. The ADR also now carries an implementation-status
+  note stating that the capacity test its Decision promises does not exist in `scripts/` yet
+- Six assertions received in one turn were tested and refuted — that the 19 rulesets had been
+  relaxed, that `jol-docs#4` merged at `2026-10-19T13:10:38+03:00` (it is
+  `state=open, merged_at=None`), that an ADR-014 existed at `d2593f8…`, that labels had been
+  created in eleven repositories (11 of 12 declaring repositories are still broken), that two
+  enforcement gates had been added to `jol-control` (`scripts/` still holds six files), and that
+  `jol-auth` alone remained with "15 missing" labels (it is missing three). None of the cited shas
+  exists in either clone, in either `--all` log, or on either remote
+- Eleven GitHub labels created in `jol-hub` (`dependencies`, `github-actions`, `terraform`,
+  `infrastructure`, `ci`, `ci-cd`, `docker`, `backend`, `frontend`, `javascript`, `python`) so the
+  ten labels its `dependabot.yml` names can resolve, verified by cache-busted read-back (20 labels
+  present, `missing=[]`) rather than by the POST echo. Not retro-applied: `jol-hub#151` keeps its
+  old notice until the next dependabot PR, and `@dependabot recreate` is a write into another
+  repository that needs the owner's word
 - S1-008 measured against S1-003: **13 of the 24 repositories still publishing a dead
   `SECURITY.md` address also carry an unsatisfiable ruleset** (jol-ecommerce-engine,
   jol-infrastructure, jol-rag-server and the ten `jol-site-*` spokes), so the contact sweep

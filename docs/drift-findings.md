@@ -303,6 +303,31 @@ them, and neither changed the enforcement state of anything.
    filtering them in the library is safe for consumers — but a self-referential path entry
    (`- '.github/workflows/security-scan.yml'`) makes the library re-scan the definition repo
    whenever the library itself is edited, which is precisely the failure being fixed.
+6. **A confident report that an action was taken is not a measurement.** This session received
+   assertions that the 19 rulesets had been relaxed, that `jol-docs#4` had merged at
+   `2026-10-19T13:10:38+03:00`, that an ADR-014 existed (sha `d2593f8…`), that labels had been
+   created across eleven repositories, that two enforcement gates had been added, and that
+   `dependabot.yml` label work was done except for `jol-auth` "15 missing". Re-checked against
+   the live API, every one was false — and the shas do not exist as objects in either clone, in
+   either repo's `--all` log, or on either remote (`gh api repos/…/git/commits/<sha>` → 404).
+   The cheapest decisive tests were `gh pr view --json state,mergedAt`, `git cat-file -t`, and
+   re-running the scan. Treat an upstream report as a hypothesis that costs four commands to
+   confirm; acting on it as fact would have marked S1-008 closed while 19 repositories still
+   demanded an approval nobody can give.
+7. **`curl` with a `Bearer` token against `github.com` HTML is not a token-scope test.** A GET
+   of `https://github.com/journeyoflife-org/jol-dr` returns `404` both anonymously and with the
+   `gh` token, while `gh api repos/journeyoflife-org/jol-dr` returns the repository with
+   `private=true`. Proven: the HTML probe cannot discriminate scope. Inferred (labelled as
+   inference): GitHub's HTML endpoints authenticate by session cookie, so lychee's token may or
+   may not be applied to `github.com` URLs depending on its sender configuration — which is also
+   why the same link passed link-check on 2026-10-13 and fails on 2026-10-17, an interval this
+   register cannot yet explain.
+8. **A workflow run whose name matches a reusable workflow is not proof that a caller resolved
+   it.** `jol-docs` shows a green `compliance-check` run dated 2026-10-17, which looks exactly
+   like consumer-side proof that `workflow_call` now works. It is not: that file is `jol-docs`'
+   own `.github/workflows/compliance-check.yml` defining the job "Document control & ADR/RoPA
+   coverage", and `grep -rn 'journeyoflife-org/.github/.github/workflows'` finds no library call
+   in `jol-docs` or `jol-hub`. The ten real spokes have not run CI since 2026-09-22.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -349,7 +374,10 @@ bypass recorded as a comment on PR #7.
 ### S1-008: Hand-set rulesets re-impose the review controls `solo_mode` removed, on 19 of 40 repositories
 
 **Discovered:** 2026-10-16  
-**Status:** OPEN — the declared baseline and the enforced state diverge silently  
+**Status:** OPEN — the declared baseline and the enforced state diverge silently. **Decision
+drafted as ADR-013 (`Proposed`, open as `jol-docs#4`, still unmerged as of 2026-10-19); no
+enforcement changed yet.** Re-measured 2026-10-19: unchanged in substance — see the paragraph
+below.  
 **Finding:** `solo_mode = true` exists precisely so this organization can operate with one
 member: `branch-protection.tf:39,53` omit `required_pull_request_reviews` entirely, and
 AGENTS.md §2 states that reviewers and CODEOWNERS are not enforced. That is true of the
@@ -407,17 +435,89 @@ before or alongside the sweep, or the sweep delivers thirteen PRs that either si
 normalise bypasses further. It also means `make drift` reporting NO DRIFT while 19
 repositories are governed by configuration no one declared — the drift tool reads only
 `name,visibility`, and `grep -c ruleset scripts/drift_detect.py` is `0`.  
-**Recommendation (pending owner decision).** Pure option (a) and pure option (b) both fail on
-measured facts: (b) cannot cover `jol-dr`, which cannot have rulesets on this plan; and (a)
-applied blindly would import 21 rulesets of three different shapes (`protect-main`,
-`Protect main branch`, and one literally named `~master` that applies to `~DEFAULT_BRANCH`),
-at least one of which is a mis-tuned artefact rather than a decision. The defensible path is
-sequential: first set `required_approving_review_count: 0` and `require_code_owner_review:
-false` on the 19 affected rulesets (out of band, recorded, reversible per RB-06 — this makes
-the fleet match the already-declared solo posture and immediately unblocks S1-003), **then**
-draft the ADR proposing rulesets as the declarative layer with classic protection deleted, and
-only then import. Doing them in that order means the ADR can be written against a fleet that is
-already consistent, instead of freezing today's accidental state into code.  
+**Recommendation (pending owner decision) — ordering revised 2026-10-17.** Pure option (a) and
+pure option (b) both fail on measured facts: (b) cannot cover `jol-dr`, which cannot have
+rulesets on this plan; and (a) applied blindly would import 21 rulesets of three different
+shapes (`protect-main`, `Protect main branch`, and one literally named `~master` that applies
+to `~DEFAULT_BRANCH`), at least one of which is a mis-tuned artefact rather than a decision.
+
+An earlier draft of this entry recommended relaxing the 19 rulesets **first** and writing the
+ADR afterwards. That ordering is withdrawn, for two reasons. First, relaxing a review
+requirement removes a control, and removing a control without a written decision is exactly the
+failure this register exists to prevent — `required_approving_review_count` is explicitly on
+AGENTS.md's list of values needing in-session human approval. Second, the ADR is what decides
+the target state, so relaxing before it exists pre-empts the decision it is supposed to record;
+the security-strongest option (a second compliant approver, making approvals real rather than
+deleting them) must be reachable on the evidence rather than foreclosed by convenience.
+
+The decision is now drafted as **ADR-013, status Proposed, open as `jol-docs#4`**. It states the
+invariant — no repository may demand more approvals than the organization can supply — as a
+testable rule, records the constraints above, and leaves every mutation unapplied pending
+approval. Sequence: accept ADR-013 → converge enforcement → declare rulesets where classic
+protection cannot express them (`v*` tags) → extend `drift_detect.py` to compare both APIs.  
+**Re-measured 2026-10-19 — nothing was relaxed, and five reported facts were false.** The fleet
+scan was re-run read-only: **24 rulesets exist, of which 20 active ones across 19 repositories
+carry a `pull_request` rule demanding an approving review, code-owner review, or both** — 17
+repositories demand ≥ 1 approving review and 19 demand code-owner review. The only repositories
+whose ruleset demands nothing are `.github`, `jol-deploy` and `jol-infrastructure` (the latter
+two still require code-owner review, so they are unsatisfiable in a different way). New detail:
+`jol-compliance`'s second ruleset `Protect main branch` (id 18790594) is **disabled** — it
+presents as a control and enforces nothing. Reports arriving in this session asserted that the
+relaxation had been executed, that this ADR had been merged, that an ADR-014 existed at sha
+`d2593f8…`, that dependabot labels had been created in eleven repositories, and that two
+enforcement gates had been added to `jol-control`. Each is contradicted by the live API, not by
+another report: `jol-docs#4` is `state=open, merged_at=None`; no commit object `455d73c`,
+`016959e`, `6d151c8` or `d2593f8…` exists in either clone or on either remote; `jol-docs
+origin/main` contains no ADR-013 or ADR-014 and its newest commit is `d36df48` (2026-09-25);
+`git ls-tree origin/main scripts/` in `jol-control` still lists exactly six files, none of which
+is a capacity or label checker; and dependabot labels are still missing in 11 of the 12
+repositories that declare them. Recorded here because the false claims all point the same way —
+they describe the unsafe state as already achieved.
+
+### S1-009: Seven governance-tier repositories have branch protection in state and none on GitHub
+
+**Discovered:** 2026-10-19  
+**Status:** OPEN — found while refuting a claim about duplicate protections; it blocks no apply
+today and distorts every future one  
+**Finding:** `terraform.tfstate` (serial 306, lineage `25425c0f`) holds **39
+`github_branch_protection` instances across 39 distinct repositories** — 11 `governance` + 28
+`standard`, with **no repository covered twice** (`branch-protection.tf:22,29` partition on
+`tier == "governance"` and its negation, so the two `for_each` sets are disjoint by
+construction). Querying `GET /repos/journeyoflife-org/<repo>/branches/main/protection` for all
+41 live repositories returns **32 present, 8 absent**. Seven of the eight absentees are
+governance-tier repositories that are **empty**: `size = 0` and
+`GET /repos/…/commits` → `409 Git Repository is empty`, so there is no branch for GitHub to
+attach protection to. They are `jol-compliance-evidence`, `jol-iac`, `jol-incident-response`,
+`jol-payments-scope`, `jol-privacy`, `jol-secrets` and `jol-status` — the most sensitive names on
+the allow-list. The eighth absentee is `.github`, which is not declared in this repository at all
+(the 41-live / 40-declared gap) and is guarded by a ruleset instead. Governance-tier presence
+therefore totals 4 of 11 in fact (`jol-compliance`, `jol-control`, `jol-docs`, `jol-policies`).  
+**Why it matters:** the governance tier is where this control plane asserts its strongest
+posture — signed commits, linear history, force-push and deletion blocks, `enforce_admins`. For
+seven repositories that posture exists in state and nowhere else. The claim "governance
+repositories are protected" is therefore false for 7 of 11 of them, and an auditor testing one
+of them would find nothing.  
+**Consequence for the next apply (inference, labelled):** a refresh will read 404 for those
+seven instances, drop them, and then propose to re-create them; a create against a repository
+with no branch is expected to fail or to be accepted and remain inert. Not executed in this
+session — `terraform plan -refresh-only` rewrites the state file, and `terraform.tfstate` is
+read-only under AGENTS.md §4, so this stays an inference until run deliberately with approval.
+`make drift` cannot see any of it: `scripts/drift_detect.py` compares `name,visibility` only.  
+**Remediation:** either seed a first commit in those seven repositories so protection can bind,
+or record them as intentionally empty and exclude them from the protection tiers until they have
+content. In both cases `state_gate.py` / `drift_detect.py` need to distinguish "protection
+missing because the repository is empty" from "protection missing because something deleted it" —
+the second is an incident and the first is a lifecycle stage, and today both are invisible.  
+**Evidence:** `terraform.tfstate` instance enumeration (read-only python, `index_key` per
+resource: governance 11, standard 28, 39 distinct keys, 0 duplicates); per-repository
+`gh api repos/journeyoflife-org/<repo>/branches/main/protection` (32 × 200, 8 × 404); `gh api
+repos/journeyoflife-org/<repo>` → `size`, `default_branch`, `visibility`; `gh api
+repos/journeyoflife-org/<repo>/commits?per_page=1` → `409 Git Repository is empty` for all
+seven; `grep -n 'lookup(def, "tier"' branch-protection.tf` → lines 22 and 29.  
+**Files affected:** `repos/jol-compliance-evidence.yml`, `repos/jol-iac.yml`,
+`repos/jol-incident-response.yml`, `repos/jol-payments-scope.yml`, `repos/jol-privacy.yml`,
+`repos/jol-secrets.yml`, `repos/jol-status.yml`, `branch-protection.tf`,
+`scripts/drift_detect.py`  
 
 ### Process slip in this session, recorded so it is not repeated
 
@@ -438,7 +538,11 @@ written, and the branch created afterwards.
 ### S1-006: The shared workflow library scanned the repository that only defines it, and one workflow was not callable at all
 
 **Discovered:** 2026-10-15  
-**Status:** FIXED in `journeyoflife-org/.github` PR #9 (`4a94b30`); consumer-side proof outstanding  
+**Status:** FIXED in `journeyoflife-org/.github` PR #9 (`4a94b30`); consumer-side proof **still
+outstanding, re-confirmed 2026-10-19** — every spoke's newest workflow run is 2026-09-21/22 and
+no repository has run CI since the merge timestamp `2026-10-15T21:15:56Z`. A green
+`compliance-check` run in `jol-docs` does not count as proof: it is that repository's own
+workflow, not a call into the library (see measurement trap 8).  
 **Finding:** Two defects in the same set of files, both measured.
 
 1. `security-scan.yml`, `compliance-check.yml` and `payment-boundary-guard.yml` filter
@@ -790,31 +894,72 @@ include. `+jol.dev` is retained purely as a mail filter.
 one line only; `ls ~/.gitconfig.d/` → `viavitae` only.
 **Files affected:** `policy/contact-channels.yml`, host `~/.gitconfig` (outside the repo)
 
-### S2-006: jol-hub's dependabot configuration references three labels that do not exist in the repository
+### S2-006: `dependabot.yml` files reference labels that do not exist — on 11 of the 12 repositories that use them
 
-**Discovered:** 2026-10-17  
-**Status:** OPEN — low severity, but it degrades every automated PR in that repository  
-**Finding:** `.github/dependabot.yml` in `jol-hub` assigns `labels:` including `dependencies`,
-`infrastructure` and `terraform`. None exists: `GET /repos/journeyoflife-org/jol-hub/labels/<name>`
-returns `404 Not Found` for all three, and the repository's label set is only the nine GitHub
-defaults (`bug`, `documentation`, `duplicate`, `enhancement`, `good first issue`,
-`help wanted`, `invalid`, `question`, `wontfix`). GitHub therefore refuses to apply any label
-to the PR and says so on the conversation:
-*"The following labels could not be found: dependencies, infrastructure, terraform. Please
-create them before Dependabot can add them to a pull request."*  
-**Impact:** automated dependency PRs arrive unlabelled, so triage by label — the mechanism that
-separates a PCI-relevant Terraform bump from a routine npm bump on a repository with 28 open
-pull requests — silently does not happen. It also means the configuration was never proven end
-to end: PR #151 has carried this notice since it opened, so the defect is visible and has been
-ignored rather than undetected.  
-**Remediation:** either create the three labels or remove them from `dependabot.yml`; then
-confirm a fresh dependabot PR actually acquires them. If labels are used for routing or policy
-decisions anywhere else, the same mismatch may exist in other repositories — check
-`gh api repos/journeyoflife-org/<repo>/labels` against each `dependabot.yml` rather than
-assuming.  
-**Evidence:** observed in the rendered PR (anonymous browser read of `jol-hub#151`), confirmed
-against the file on `origin/main` and the labels API.  
-**Files affected:** `journeyoflife-org/jol-hub/.github/dependabot.yml`
+**Discovered:** 2026-10-16 from one rendered PR; **scope corrected 2026-10-17 and re-measured
+2026-10-19**  
+**Status:** PARTIALLY FIXED — `jol-hub` corrected with read-back; 11 repositories still
+affected; the vocabulary itself is declared nowhere  
+**Original framing, recorded because it was wrong:** this was filed as a `jol-hub`-specific
+low-severity defect on the strength of a single PR's rendered comment. Measured fleet-wide it is
+systemic: **41 repositories, 14 with a `.github/dependabot.yml`, 12 of them declaring `labels:`,
+and 11 of those 12 referencing labels the repository does not have.** Only `jol-hub` has been
+fixed. Severity is unchanged (S2) — this degrades triage routing, not a control — but the scope
+claim was.
+**Finding:** GitHub does not create labels on a PR's behalf. It applies what exists, silently
+drops the rest, and says so on the conversation: *"The following labels could not be found: …
+Please create them before Dependabot can add them to a pull request."* Measured missing sets
+(fresh scan, 2026-10-19, identical to 2026-10-17):
+
+| repository | labels missing | still present |
+|---|---|---|
+| jol-analytics-ai | `security` | 11 |
+| jol-auth | `dependencies`, `github-actions`, `python` | 9 (defaults only) |
+| jol-bitrix24-integration | `ci`, `dependencies`, `security` | 9 |
+| jol-docs | `ci`, `dependencies` | 9 |
+| jol-dr | `ci`, `dependencies` | 9 |
+| jol-ecommerce-engine | `ci`, `dependencies`, `javascript`, `python` | 9 |
+| jol-infrastructure | `ci-cd`, `dependencies`, `production`, `terraform` | 11 |
+| jol-mcp-servers | `ci`, `compliance-server`, `dependencies`, `docs-server`, `git-server`, `jira-server`, `python` | 9 |
+| jol-policies | `ci`, `dependencies` | 9 |
+| jol-repo-template | `dependencies`, `github-actions`, `python` | 9 |
+| jol-scripts | `ci`, `dependencies` | 9 |
+
+`jol-hub` referenced ten labels and had none of them; eleven were created (`dependencies`,
+`github-actions`, `terraform`, `infrastructure`, `ci`, `ci-cd`, `docker`, `backend`, `frontend`,
+`javascript`, `python`) and read back: 20 labels present, `missing=[]`. The live proof that the
+defect is real and unfixed elsewhere is `jol-auth#19`, an open dependabot PR with `labels = []`.
+**Impact:** automated dependency PRs arrive unlabelled across the fleet, so label-based triage —
+the mechanism that would separate a Terraform bump in `jol-infrastructure` from a routine npm
+bump, or a security bump from a feature bump in `jol-analytics-ai` and `jol-bitrix24-integration`
+— does not happen. It also proves the configuration was never exercised end to end.
+**Why "fix all 11" is not the whole answer:** there is no authoritative label vocabulary to fix
+them *to*. `GET /orgs/journeyoflife-org/labels` returns `404 Not Found` on this plan
+(organization-level labels are not available), and `grep -rn labels policy/*.yml repos/*.yml`
+returns nothing — the only hit is prose in `policy/contact-channels.yml`. Creating the union of
+every referenced label in all eleven repositories would be eleven out-of-band mutations with no
+declarative source, which is the same ungoverned-control pattern S1-008 describes.
+**Remediation, in order:** (1) declare a minimal vocabulary in `jol-control` (a
+`policy/label-vocabulary.yml`, or a `labels:` key in `policy/repo-defaults.yml`) covering what
+routing actually needs — `dependencies`, `security`, and the ecosystem labels dependabot
+references; (2) then either create those labels per repository or strip the `labels:` keys that
+name anything else, in one pass, alongside the S1-003 contact sweep so the PR count does not
+triple; (3) add a check that fails when a `dependabot.yml` names a label the repository lacks —
+cheap, local to this repository, and it makes the class unrepeatable. Note two referenced labels
+that belong to no sensible vocabulary (`compliance-server`, `docs-server`, `git-server`,
+`jira-server` in `jol-mcp-servers`; `production` in `jol-infrastructure`) — those are candidates
+for removal, not creation.
+**End-to-end caveat:** creating labels does not retro-label an existing PR. `jol-hub#151` keeps
+its old notice; proof arrives with the next dependabot PR, or immediately via a `@dependabot
+recreate` comment, which is a write into another repository and needs the owner's word.
+**Evidence:** read-only fleet scan, run twice (2026-10-17, 2026-10-19) with identical results:
+for each repository fetch `contents/.github/dependabot.yml?ref=main`, collect every `labels:`
+entry in both block and flow style, compare against `GET /repos/{org}/{repo}/labels?per_page=100`,
+and report the set difference — exit codes 0 evaluated-clean / 1 mismatch / 2 could-not-enumerate
+(no repository was blind: `blind = []`). Label creation in `jol-hub` verified by cache-busted
+read-back rather than by the POST echo.
+**Files affected:** `journeyoflife-org/<11 repos>/.github/dependabot.yml` (not managed by this
+control plane); no file in `jol-control` declares a label vocabulary
 
 ---
 
@@ -856,6 +1001,10 @@ Drift detection uses three signals:
 not: whether the **state on disk** can account for what the configuration declares, before
 `make apply` runs. `make apply` is behind `state-gate` and `plan-gate`.
 
-**Last full scan:** 2026-10-09 (config vs live on this host: `NO DRIFT — All 40 repos
-match`; state vs live not re-planned in this pass — `make plan` requires a refresh against
-live)
+**Last full scan:** 2026-10-19 (read-only fleet re-measurement on this host: 41 live / 40
+declared repositories; 39 protection instances across 39 distinct repositories in state serial
+306 against 32 protections existing live — see S1-009; 24 rulesets, 20 of them active and
+requirement-bearing across 19 repositories — see S1-008; dependabot label mismatch in 11 of 12
+declaring repositories — see S2-006). `make drift` was run separately and still reports only
+name/visibility agreement; no `terraform plan -refresh-only` was executed, because it rewrites a
+file this repository treats as read-only.
