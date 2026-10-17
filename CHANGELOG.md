@@ -127,6 +127,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- S1-008 measured against S1-003: **13 of the 24 repositories still publishing a dead
+  `SECURITY.md` address also carry an unsatisfiable ruleset** (jol-ecommerce-engine,
+  jol-infrastructure, jol-rag-server and the ten `jol-site-*` spokes), so the contact sweep
+  would deliver PRs mergeable only by the admin bypass S1-007 criticises. `jol-dr` cannot be
+  assessed at all — rulesets 403 for private repositories on this plan. Register order now puts
+  S1-008 before the sweep. The recommendation added is sequential rather than either/or: relax
+  the 19 rulesets to match the declared solo posture first (reversible, RB-06), then write the
+  ADR against an already-consistent fleet — because option (b) cannot cover `jol-dr` and option
+  (a) as it stands would import three different ruleset shapes, one of them named `~master`
+  while applying to `~DEFAULT_BRANCH`. Not executed: changing enforcement on 19 repositories
+  needs the owner's decision.
+- S2-006 — `jol-hub/.github/dependabot.yml` assigns `dependencies`, `infrastructure` and
+  `terraform` labels that do not exist there (all three 404; its label set is the nine GitHub
+  defaults), so every automated dependency PR arrives unlabelled and the distinction between a
+  PCI-relevant Terraform bump and a routine npm bump is never made. Surfaced by a browser read
+  of `jol-hub#151`, confirmed against the file on `origin/main` and the labels API.
+- S1-007 — one more avenue closed honestly rather than assumed: an unauthenticated browser
+  renders the PR header, conversation and `21 / 21 checks OK` but not the merge-status widget,
+  and `.github` has no open PR to inspect. Reading the merge box needs the owner's signed-in
+  session; recorded as a verified negative result so nobody re-attempts it.
 - `docs/drift-findings.md` S1-008 — **the control plane does not control enforcement.** A scan
   of all 40 public repositories found **21 hand-configured rulesets across 19 repositories
   requiring at least one approving review and/or code-owner approval** — exactly what

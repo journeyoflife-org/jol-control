@@ -23,6 +23,7 @@ documents cite them. In numeric order:
 | S2-003 | State is local, not remote | open, RA-03 accepted |
 | S2-004 | AGENTS.md cited a resolved state mismatch as current truth | fixed |
 | S2-005 | Git identity migration: authorship needs a verified account email | closed by decision |
+| S2-006 | Dependabot labels referenced by jol-hub do not exist | open |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -395,7 +396,28 @@ each `…/rulesets/{id}` and take `rules[type=="pull_request"].parameters
 at all (`403 Upgrade to GitHub Pro or make this repository public to enable this feature`), so
 rulesets on the private repository are unknown.  
 **Files affected:** 19 repositories' hand-configured rulesets (none declared in Terraform),
-`scripts/drift_detect.py` (does not compare rulesets)
+`scripts/drift_detect.py` (does not compare rulesets)  
+**Measured collision with S1-003 (2026-10-17).** Of the 24 repositories still advertising a
+dead address in their own `SECURITY.md`, **13 also carry an unsatisfiable ruleset** —
+jol-ecommerce-engine, jol-infrastructure, jol-rag-server and all ten `jol-site-*` spokes — so a
+correctly written contact-sweep PR there is **mergeable only by the same admin bypass this
+register criticises in S1-007**. `jol-dr` cannot be evaluated at all (rulesets return `403`
+for private repositories on this plan). This sets the order of work: S1-008 must be resolved
+before or alongside the sweep, or the sweep delivers thirteen PRs that either sit unmerged or
+normalise bypasses further. It also means `make drift` reporting NO DRIFT while 19
+repositories are governed by configuration no one declared — the drift tool reads only
+`name,visibility`, and `grep -c ruleset scripts/drift_detect.py` is `0`.  
+**Recommendation (pending owner decision).** Pure option (a) and pure option (b) both fail on
+measured facts: (b) cannot cover `jol-dr`, which cannot have rulesets on this plan; and (a)
+applied blindly would import 21 rulesets of three different shapes (`protect-main`,
+`Protect main branch`, and one literally named `~master` that applies to `~DEFAULT_BRANCH`),
+at least one of which is a mis-tuned artefact rather than a decision. The defensible path is
+sequential: first set `required_approving_review_count: 0` and `require_code_owner_review:
+false` on the 19 affected rulesets (out of band, recorded, reversible per RB-06 — this makes
+the fleet match the already-declared solo posture and immediately unblocks S1-003), **then**
+draft the ADR proposing rulesets as the declarative layer with classic protection deleted, and
+only then import. Doing them in that order means the ADR can be written against a fleet that is
+already consistent, instead of freezing today's accidental state into code.  
 
 ### Process slip in this session, recorded so it is not repeated
 
@@ -490,6 +512,12 @@ attributed authors, and is not behind the base branch — yet the API still repo
 three times in one day is not a control — it is an absent control with paperwork. The
 repository's own changelog has stated since 2026-09-12 that the bypass "is not an approved
 merge path".  
+**Browser route also closed (attempted 2026-10-17).** Reading the merge box in a browser was
+tried and does not work unauthenticated: an anonymous session on a PR page renders the header,
+the conversation and `21 / 21 checks OK`, but the merge status widget itself is behind login,
+and `.github` currently has **no open pull request** at all (all merged), so there is nothing
+to inspect. This eliminates "go look at the merge box in a browser" as an agent-executable step
+— it requires the owner's signed-in session.  
 **Why it is still open:** the remaining cause is not exposed by either protection API. Next
 steps are the merge-box text in the web UI (which names the unsatisfied requirement) or a
 GitHub Support ticket; `GET /orgs/journeyoflife-org/rulesets` cannot be interrogated on this
@@ -761,6 +789,32 @@ include. `+jol.dev` is retained purely as a mail filter.
 `required_linear_history.enabled=true`; `git config --global --get-regexp '^includeif\.'` →
 one line only; `ls ~/.gitconfig.d/` → `viavitae` only.
 **Files affected:** `policy/contact-channels.yml`, host `~/.gitconfig` (outside the repo)
+
+### S2-006: jol-hub's dependabot configuration references three labels that do not exist in the repository
+
+**Discovered:** 2026-10-17  
+**Status:** OPEN — low severity, but it degrades every automated PR in that repository  
+**Finding:** `.github/dependabot.yml` in `jol-hub` assigns `labels:` including `dependencies`,
+`infrastructure` and `terraform`. None exists: `GET /repos/journeyoflife-org/jol-hub/labels/<name>`
+returns `404 Not Found` for all three, and the repository's label set is only the nine GitHub
+defaults (`bug`, `documentation`, `duplicate`, `enhancement`, `good first issue`,
+`help wanted`, `invalid`, `question`, `wontfix`). GitHub therefore refuses to apply any label
+to the PR and says so on the conversation:
+*"The following labels could not be found: dependencies, infrastructure, terraform. Please
+create them before Dependabot can add them to a pull request."*  
+**Impact:** automated dependency PRs arrive unlabelled, so triage by label — the mechanism that
+separates a PCI-relevant Terraform bump from a routine npm bump on a repository with 28 open
+pull requests — silently does not happen. It also means the configuration was never proven end
+to end: PR #151 has carried this notice since it opened, so the defect is visible and has been
+ignored rather than undetected.  
+**Remediation:** either create the three labels or remove them from `dependabot.yml`; then
+confirm a fresh dependabot PR actually acquires them. If labels are used for routing or policy
+decisions anywhere else, the same mismatch may exist in other repositories — check
+`gh api repos/journeyoflife-org/<repo>/labels` against each `dependabot.yml` rather than
+assuming.  
+**Evidence:** observed in the rendered PR (anonymous browser read of `jol-hub#151`), confirmed
+against the file on `origin/main` and the labels API.  
+**Files affected:** `journeyoflife-org/jol-hub/.github/dependabot.yml`
 
 ---
 
