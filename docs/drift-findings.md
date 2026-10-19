@@ -11,7 +11,7 @@ documents cite them. In numeric order:
 | ID | Subject | Status |
 |---|---|---|
 | S1-001 | Private repos cannot have branch protection without GitHub Pro | fixed |
-| S1-002 | Drift detection reported "cannot see" as "does not exist", and a blind run as passing | checker fixed; CI still cannot evaluate |
+| S1-002 | Drift detection reported "cannot see" as "does not exist", and a blind run as passing | fixed (checker 2026-10-09; CI credential 2026-10-19) |
 | S1-003 | Every published contact address in the fleet is undeliverable | open; intake and org defaults fixed, 24 repos to sweep |
 | S1-004 | The published donation path is a domain-parking lander | partially closed; affordance removed, capability absent |
 | S1-005 | `.github` code-owner review unsatisfiable — diagnosis later overtaken | superseded by S1-007 |
@@ -56,8 +56,8 @@ residual is closed, the new dependency is documented in `docs/runbooks.md` RB-07
 `in_defined_not_github: ["jol-dr"]`. Nothing was missing. `gh api
 repos/journeyoflife-org/jol-dr` returns `visibility=PRIVATE`, `gh repo list
 journeyoflife-org --limit 500` on this host returns 41 rows (40 managed + `.github`), and
-`make drift` reported `NO DRIFT — All 40 repos match`. CI runs the same script with
-`secrets.GITHUB_TOKEN`, which enumerates only public repositories, so the fleet's single
+`make drift` reported `NO DRIFT — All 40 repos match`. CI ran the same script with
+`secrets.GITHUB_TOKEN` until 2026-10-19, which enumerates only public repositories, so the fleet's single
 private repository was absent from its view and the checker concluded absence from
 ignorance. Worse than the false alarm: the same script returned **exit 0** whenever the
 listing came back empty or `gh` failed outright, so a fully blind run reported the control
@@ -91,8 +91,16 @@ the enumeration in CI now contains a private repository, which no scope-light cr
 produce. Proof is the CI run, not the mint:
 run **39255407378** at `headSha=1a66742` printed `"evaluated": true`, `"github_count": 40`,
 `"matched_count": 40` and `NO DRIFT — All 40 repos match`, where the blind runner token's view
-is 39 rows. Two dispatches at the preceding commit (`39254606046`, `39254610945`) failed as
-expected, which is what distinguishes a working binding from a decorative one.
+is 39 rows. The two dispatches at the preceding commit (`39254606046`, `39254610945`) establish the
+**before** state only: their `head_sha` is `ba99034`, whose published file bound
+`GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` with no `||` at all (`git show
+ba99034:.github/workflows/compliance-scan.yml`), so they are evidence of the blind token, not of
+the fallback expression. **The fallback branch has never executed in CI** — `gh secret list` shows
+`ORG_READ_TOKEN` created at 12:43:04Z, before the first run of the new expression at 12:52:05Z, so
+the unset-secret path was never live. That behaviour is inferred from GitHub's `||` semantics (an
+unset secret is an empty string, hence falsy) and labelled as inference here rather than as proof;
+proving it would mean deleting the secret, and a secret value is write-only and unrecoverable, so
+the test costs a re-mint and is not worth doing.
 
 **Scheduled-run history, measured 2026-10-19** (`gh run list --event schedule`) — every scheduled
 run of this control has failed since at least the start of the retained history, four consecutive
@@ -113,9 +121,17 @@ that GitHub delivered every one of those `cron: 0 2 * * 6` runs between 06:47 an
 schedule timing must not be assumed precise when reasoning about a deadline.
 
 What this control now depends on, and how it fails: the verdict is only as durable as a
-credential with an expiry. If `ORG_READ_TOKEN` is unset, deleted, or left to lapse, the step
-falls back to `secrets.GITHUB_TOKEN`, the enumeration loses `jol-dr`, and the job reports
-UNEVALUATED (exit 2) — an honest red, never a fabricated pass and never a false DRIFT. Minting,
+credential with an expiry, and the two ways it goes away **fail differently**, because `||`
+substitutes only on a falsy operand. Unset or deleted secret → falls back to
+`secrets.GITHUB_TOKEN` → `"github_count": 39`, reason `cannot enumerate private repos`. Expired,
+revoked, or regenerated-but-not-re-stored token → a non-empty string, so no fallback →
+`gh repo list failed … HTTP 401: Bad credentials` and **no `github_count` line at all** (measured
+with a deliberately invalid value on 2026-10-19). Both are exit 2, so neither can ever read as a
+pass and neither as a false DRIFT; only the diagnosis differs, and RB-07 carries the table.
+A third consumer was found while checking this: `apply.yml`'s post-apply `Drift detection` step ran
+the same script with the ambient runner token and no binding, so it would have failed the
+production job for a non-drift reason the day `vars.TF_REMOTE_STATE_ENABLED` is set. It now binds
+the same expression. Minting,
 verification and rotation are `docs/runbooks.md` RB-07. Two traps measured while closing this:
 (a) a `workflow_dispatch` run executes the workflow file **as published on the default branch**,
 so interpreting a run before the `env:` binding is pushed yields a wrong conclusion in both
@@ -542,7 +558,7 @@ of them would find nothing.
 **The emptiness also breaks the procedures that point into those repositories** (measured
 2026-10-19): `docs/runbooks.md` RB-03 — the secret-exposure response — step 4 files an incident in
 `jol-incident-response` and step 5 updates a rotation log in `jol-secrets`, and neither repository
-has a single commit (`size=0`, `pushed_at` equals `created_at` at 2026-09-24T14:39:53Z). So the
+has a single commit (`size=0`, `pushed_at` one second after `created_at` at 2026-09-24T14:39Z). So the
 documented answer to "a credential leaked" cannot be completed as written: it would require
 authoring those repositories' first commits under incident pressure. RB-03 now says so inline and
 names where the record actually goes; the underlying gap is this finding.  

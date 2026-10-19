@@ -193,6 +193,13 @@ jobs:
           echo "Compliance snapshot generated."
 
       - name: Drift detection
+        # Same credential policy as compliance-scan.yml's drift job (docs/runbooks.md RB-07): the
+        # ambient runner token enumerates public repositories only, so with it this step returns
+        # UNEVALUATED (exit 2) on a fleet that contains a private repository and fails the job for
+        # a reason that is not drift. Harmless while this job is gated off by
+        # vars.TF_REMOTE_STATE_ENABLED, and a landmine the moment someone enables it.
+        env:
+          GITHUB_TOKEN: ${{ secrets.ORG_READ_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           python3 scripts/drift_detect.py
           echo "Drift detection complete."

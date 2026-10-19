@@ -22,10 +22,11 @@ gh repo view journeyoflife-org/<repo-name> --json url,visibility
 python3 scripts/drift_detect.py     # 0 = evaluated, no drift
                                     # 1 = drift, the named repos are the evidence
                                     # 2 = UNEVALUATED — not a pass and not a failure:
-                                    #     the token could not see the whole org. CI now
-                                    #     evaluates via secrets.ORG_READ_TOKEN (RB-07, and
-                                    #     S1-002 in docs/drift-findings.md); a run on this
-                                    #     host is the independent second measurement
+                                    #     the token could not see the whole org. CI binds
+                                    #     secrets.ORG_READ_TOKEN in both places that run this
+                                    #     script (compliance-scan.yml's drift job and apply.yml's
+                                    #     post-apply step; RB-07, S1-002 in docs/drift-findings.md);
+                                    #     a run on this host is the independent second measurement
 ```
 
 A new repository must be declared in `repos/*.yml` **and** exist in the organization;
@@ -65,12 +66,13 @@ refuses to conclude anything when its own enumeration is partial.
 3. Force-push cleaned history (requires temporary branch protection override)
 4. File incident in `jol-incident-response`
 5. Record the rotation in `jol-secrets`' rotation log — **which does not exist yet**. That
-   repository is empty (`size=0`, and `pushed_at` equals `created_at` at 2026-09-24T14:39:53Z,
-   verified 2026-10-19; it is one of the seven governance-tier empties in S1-009), so there is no
-   branch, no file and no history to update. Until it is populated, the rotation record goes into
-   the affected credential's own inventory table (RB-07 for `ORG_READ_TOKEN`) and, if the exposure
-   was real, into the findings register — and `jol-incident-response` in step 4 is empty too, so an
-   incident filed "there" means creating the repository's first commit, not appending to a log
+   repository is empty (`size=0`, no commits, and `pushed_at` sits one second after `created_at` at
+   2026-09-24T14:39:53/54Z, verified 2026-10-19; it is one of the seven governance-tier empties in
+   S1-009), so there is no branch, no file and no history to update. Until it is populated, the
+   rotation record goes into the affected credential's own inventory table (RB-07 for
+   `ORG_READ_TOKEN`) and, if the exposure was real, into the findings register — and
+   `jol-incident-response` in step 4 is empty too, so an incident filed "there" means creating the
+   repository's first commit, not appending to a log
 6. Review `policy/compliance-gates.yml` secret_scan remediation steps
 
 ## RB-04: Update Compliance Gate
@@ -179,17 +181,17 @@ repositories, because `secrets.GITHUB_TOKEN` sees public ones only. Without it t
 UNEVALUATED (exit 2) and the allow-list control is unproven in CI — see S1-002. It is read-only
 by policy and must never be used for `terraform apply`; the apply path runs host-side.
 
-### Required settings (a token that misses any row here reproduces the blindness)
+### Required settings (each row is a condition; the consequence column says what its absence costs)
 
 | Field | Value | Consequence if wrong |
 |---|---|---|
-| Type | Fine-grained PAT | Classic `repo` also works but is write-capable — record it as a deviation |
+| Type | Fine-grained PAT, **read-only** | A classic `repo` token does reach the same endpoints but is org-wide **write-capable**, and `main.tf:22-28` forbids any org-write credential in CI. Using one is an S1 finding plus an explicit risk acceptance (AGENTS.md §4/§6) — not a deviation note |
 | Resource owner | **journeyoflife-org** | owner = personal account → org private repos 404 |
 | Repository access | **All repositories** | "Public repositories" or a selection without `jol-dr` → exit 2 forever |
-| Repository permissions | Metadata **Read-only**, Contents **Read-only** | Contents not required, Metadata is automatic; anything *write* here is over-privilege |
+| Repository permissions | Metadata **Read-only** (automatic, cannot be cleared) + Contents **Read-only** | Metadata alone satisfies both calls the checker makes (`GET /orgs/{org}/repos` and `GET /repos/{owner}/{repo}`); Contents is granted here as headroom and **has not been measured as unnecessary** — do not strip it on the strength of that claim. Anything *write* is over-privilege |
 | Organization permissions | Members **Read-only** | without it the org enumeration can omit private rows |
 | Expiration | 90 days | no expiry is an audit finding |
-| Name | `jol-control-drift-read-<YYYY-MM-DD>` | rotation provenality: an unnamed token cannot be retired safely |
+| Name | `jol-control-drift-read-<YYYY-MM-DD>` | rotation provenance: an unnamed token cannot be retired safely |
 
 Prefilled form: `https://github.com/settings/personal-access-tokens/new?name=jol-control-drift-read&description=Read-only+org+repo+enumeration+for+jol-control+drift+gate+(S1-002)&target_name=journeyoflife-org&expires_in=90&metadata=read&contents=read&members=read`
 
@@ -200,7 +202,8 @@ the organization is auto-approved, so no access request has to be cleared.
 ### Steps
 1. Mint per the table. Never paste the value into a chat, an agent session, a file, or a
    `--body`: a credential recorded in a transcript is a credential that must be rotated.
-2. **Verify before storing**, in a subshell, so nothing leaks into the interactive environment:
+2. **Verify before storing**, assigning the token per command so it never enters the interactive
+   environment:
    ```bash
    read -rs T
    GH_TOKEN="$T" gh api user --jq '"identity: \(.login)"'
@@ -227,12 +230,15 @@ the organization is auto-approved, so no access request has to be cleared.
      --jq .content | base64 -d | grep -n 'secrets.ORG_READ_TOKEN'   # the env: line, not just prose
    gh workflow run compliance-scan.yml --repo journeyoflife-org/jol-control
    R=$(gh run list --repo journeyoflife-org/jol-control --workflow compliance-scan.yml \
-        --limit 1 --json databaseId --jq '.[0].databaseId')
+        --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')
    gh run view "$R" --repo journeyoflife-org/jol-control --log \
      | grep -aE '"evaluated"|"github_count"|NO DRIFT|UNEVALUATED'
    ```
-   Accepting evidence is `"evaluated": true` with `"github_count": 40` (39 means the token is
-   still private-blind). Baseline: run 39255407378 at `1a66742`, 2026-10-19.
+   Accepting evidence is `"evaluated": true` with `"github_count": 40` (39 means the enumeration
+   could not see private repositories). Baseline: run 39255407378 at `1a66742`, 2026-10-19.
+   The `--event workflow_dispatch` filter matters: `compliance-scan.yml` also triggers on
+   `pull_request`, where the drift job is gated off entirely, so an unfiltered `--limit 1` can
+   capture a run that never printed an `"evaluated"` line at all and read as a missing verdict.
 
    **Guard any scheduled-run check against a stale capture.** `gh run list --event schedule
    --limit 1` returns the newest *scheduled* run, and until 2026-10-24 that is a pre-binding
@@ -262,13 +268,16 @@ the organization is auto-approved, so no access request has to be cleared.
 5. Record the mint in the inventory below, and cite the run id in the findings register.
 
 ### Inventory
-No guarantee of a programmatic read: `GET /orgs/journeyoflife-org/personal-access-tokens` answers
-`404` from this host, and GitHub documents the endpoint as **"Only GitHub Apps can use this
-endpoint"**. The sibling control plane did get a full inventory from the analogous call on
-jolarca-dev (2026-10-17), so availability evidently depends on what the acting credential *is* —
-this host's `gh` login sends no `x-oauth-scopes` header, i.e. it is not a scope-carrying OAuth
-token. Treat it as unavailable rather than chasing a scope: do not re-derive the token's grants
-from the API.
+`GET /orgs/journeyoflife-org/personal-access-tokens` answers `404` from this host because GitHub
+documents it as **"Only GitHub Apps can use this endpoint"** — and the acting credential here is an
+OAuth token holding `admin:org` (`gh auth status` → scopes `admin:org, gist, read:user, repo,
+user:email, workflow`), which proves the `404` is about the **caller type**, not about a missing
+scope. Do not chase it by granting more permissions.
+
+> Recorded because it was got wrong here once: an empty result from a pipeline is not a measurement.
+> `gh api -i user | grep -i x-oauth-scopes` printed nothing in this session and was read as "the
+> token has no scopes". It was a swallowed pipe. Check the thing directly (`gh auth status`) before
+> reasoning from an absence.
 
 So the authoritative read of name, granted permissions, repository selection and `expires_at` is
 the Settings UI: `https://github.com/settings/tokens?type=beta` (list, with expiry and last-used)
@@ -287,11 +296,32 @@ and GitHub delivered this `cron: 0 2 * * 6` between 06:47 and 08:17 UTC in every
 don't reason about the deadline as if 02:00 were precise. Rotate in December.
 
 > **Do not press "Update" while inspecting the token.** The detail page opens in edit form, and
-> the adjacent controls are `Update`, `Regenerate token` and `Delete`. Leaving an inspection by
-> clicking `Update` re-saves the token, and `Regenerate token` mints a **new value** that
-> silently orphans the stored secret: the drift job then falls back to `secrets.GITHUB_TOKEN`
-> and reports UNEVALUATED. Cancel out of the form; if a regeneration ever does happen, re-run
-> step 3 before anything else.
+> the adjacent controls are `Update`, `Regenerate token` and `Delete`. `Regenerate token` mints a
+> **new value** while the stored secret keeps the old one, and the drift job then authenticates with
+> a revoked credential — see the failure modes below: that is the `401` shape, **not** the
+> `github_count: 39` shape. Cancel out of the form; if a regeneration ever does happen, re-run step 3
+> before anything else.
+
+### Failure modes — two shapes, and they are not interchangeable
+
+`||` substitutes only when the first operand is **falsy**, i.e. an empty string. A stored but dead
+token is not empty, so it never falls back. Measured 2026-10-19 with a deliberately invalid value:
+`GH_TOKEN="github_pat_BOGUS…" python3 scripts/drift_detect.py` → `UNEVALUATED: gh repo list failed
+(exit 1): HTTP 401: Bad credentials`, `rc=2`, and **no `github_count` line in the output at all**.
+
+| Situation | Expression resolves to | Log signature | Exit |
+|---|---|---|---|
+| Secret **unset or deleted** | `secrets.GITHUB_TOKEN` | `"evaluated": false`, `"reason": "cannot enumerate private repos"`, `"github_count": 39` | 2 |
+| Token **expired, revoked, or regenerated** (stale value stored) | the dead PAT | `gh repo list failed … HTTP 401: Bad credentials`, no `github_count` | 2 |
+| Token valid but **under-scoped** | the PAT | `403 Resource not accessible by personal access token`, or `github_count: 39` if only the org permission is missing | 2 |
+| Real drift | either | `DRIFT: <name> is declared in repos/ but does not exist…` | 1 |
+
+Both token-failure shapes end in UNEVALUATED, so the **safety** property holds either way — the
+job cannot go green on a broken credential. What differs is the diagnosis: grep for
+`github_count` and you will find it in the first case and never in the second.
+
+Both remain honest reds, and neither can produce a green verdict — that property is what
+`tests/test_drift_gate.py` fixture `ci_github_actions_token.json` pins.
 
 Every attribute of this credential is now read from the token's own detail page rather than
 inferred from the mint URL. That page is the only source GitHub offers — the API equivalent is
@@ -300,7 +330,8 @@ count as the backstop that catches a grant narrowed or widened without a corresp
 this table.
 
 ### Rollback / degradation
-Deleting the secret is safe and honest: the step falls back to `secrets.GITHUB_TOKEN`, the drift
-job returns exit 2, and the annotation says UNEVALUATED. There is no path by which losing this
-credential produces a green drift verdict — that property is what `tests/test_drift_gate.py`
-fixture `ci_github_actions_token.json` pins.
+Deleting the secret is safe and honest: the step falls back to `secrets.GITHUB_TOKEN`, the
+enumeration loses `jol-dr`, and the job returns exit 2 with the `github_count: 39` signature above.
+Letting the token **expire** is equally honest but looks different — `401 Bad credentials` and no
+`github_count` — so read the failure-mode table before concluding the binding broke. There is no
+path by which losing this credential produces a green drift verdict.

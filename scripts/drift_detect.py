@@ -15,8 +15,10 @@ Why the third code had to exist (finding S14, verified 2026-10-09): the weekly
 Compliance Scan failed with `in_defined_not_github: ["jol-dr"]` while `make drift`
 on this host reported `NO DRIFT — All 40 repos match`. Nothing is missing — `jol-dr`
 exists and is PRIVATE (gh api repos/journeyoflife-org/jol-dr -> visibility=PRIVATE).
-CI runs drift detection with `secrets.GITHUB_TOKEN`, whose installation can only
-enumerate public repositories, so the one private repo in the fleet looked absent.
+CI ran drift detection with `secrets.GITHUB_TOKEN` until 2026-10-19 — it now prefers
+secrets.ORG_READ_TOKEN, a read-only org PAT, and falls back to the runner token (see
+docs/runbooks.md RB-07) — and that installation can only enumerate public repositories, so
+the one private repo in the fleet looked absent.
 
 Two defects followed from that, and both are worse than the false alarm:
 

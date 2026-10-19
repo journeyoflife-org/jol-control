@@ -174,23 +174,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused), 9 other jolarca repositories do not (which is why 3 noreply commits already
   pushed, each unverified), and `jolarca-dr` and `jolarca-consent` returned `404 Branch not
   protected` at all.
+- `.github/workflows/apply.yml`: the post-apply `Drift detection` step now binds the same
+  `secrets.ORG_READ_TOKEN || secrets.GITHUB_TOKEN` expression `compliance-scan.yml` uses, with the
+  reason inline. It ran on the ambient runner token, so the day `vars.TF_REMOTE_STATE_ENABLED` is set
+  the production job would fail on a step whose verdict is a token artefact rather than drift.
+  Inert today because that job is gated off
+- `scripts/drift_detect.py`: **docstring only** — "CI runs drift detection with
+  `secrets.GITHUB_TOKEN`" is dated to the period before 2026-10-19 and now names the credential that
+  replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- Six overstatements introduced by this session's own closure work, found by reviewing the diff
+  rather than trusting the narrative, and corrected in `AGENTS.md`, `docs/drift-findings.md` and
+  `docs/runbooks.md`:
+  - **`||` does not fall back on an expired token.** It substitutes only a falsy operand, and a
+    stored-but-dead PAT is a non-empty string. Every "unset, deleted **or lapsed** → falls back →
+    `github_count: 39" sentence was wrong for the lapse case, which instead produces
+    `HTTP 401: Bad credentials` with **no `github_count` line at all** (measured with a deliberately
+    invalid value). RB-07 now carries a failure-mode table separating the shapes, because the old
+    text would have sent the next operator grepping for a string that never appears
+  - **The fallback branch has never executed in CI.** Runs `39254606046` / `39254610945` ran at
+    `headSha=ba99034`, whose published file bound `secrets.GITHUB_TOKEN` alone, so they evidence the
+    blind token, not the expression; and the secret predates the first run of the new expression by
+    nine minutes. The claim "proving the fallback shape" is replaced with the inference it actually
+    is, plus why measuring it (deleting an unrecoverable secret) is not worth the cost
+  - The findings-register **index row** still said "CI still cannot evaluate" two screens above the
+    body that declared it closed, and `drift_detect.py`'s docstring said the same in the present
+    tense. An auditor reads the index first
+  - RB-07's scope table offered a classic `repo` token as an acceptable alternative, which
+    contradicts the `main.tf` policy comment this same change strengthened — a write-capable
+    credential in CI is a finding plus a risk acceptance, not a deviation note
+  - RB-07's inventory paragraph inferred "the host credential carries no scopes" from an
+    **empty grep**, which was a swallowed pipe: `gh auth status` shows an OAuth token holding
+    `admin:org`. The `404` is about caller type (GitHub App only), full stop. The episode is
+    recorded in RB-07 as a lesson about reasoning from an absence
+  - Minor precision: `pushed_at` is one second after `created_at`, not equal to it; step 4's run-id
+    capture lacked `--event workflow_dispatch` and could have grabbed a PR run where the drift job
+    never executes; step 2 said "in a subshell" for what is a per-command assignment
 - Two documented instructions that could not be followed, found by **executing** them rather than
   reading them. `docs/runbooks.md` RB-07's scheduled-run guard used a `jq` expression that adds a
   number to a string, so it errored inside `$( )`, left both shell variables empty and printed a
   blank verdict while still exiting 0 — an inert check that reads as a judgement. Replaced with a
   tab-separated interpolation and run verbatim out of the runbook file to confirm its output.
   RB-03 step 5 also told the operator to update a rotation log in `jol-secrets`, a repository with
-  no commits at all (`size=0`, `pushed_at` equals `created_at`); it now states that, says where the
+  no commits at all (`size=0`, `pushed_at` one second after `created_at`); it now states that, says where the
   record goes instead, and S1-009 carries the consequence for the incident-response path
 - S1-002 residual closed — the scheduled Compliance Scan can now evaluate the whole allow-list.
   `ORG_READ_TOKEN` was minted and stored as a `jol-control` repository secret, and CI run
   **39255407378** (at `1a66742`) reports `"evaluated": true`, `"github_count": 40`,
   `"matched_count": 40`, `NO DRIFT — All 40 repos match` where the runner token's enumeration
-  returned 39 rows and could not conclude absence at all. Two dispatch runs at the preceding
-  commit (`39254606046`, `39254610945`) failed as expected, which is the control that distinguishes
-  a working binding from a decorative one. The register also now carries the measured scheduled-run
+  returned 39 rows and could not conclude absence at all. The two dispatch runs at the preceding
+  commit (`39254606046`, `39254610945`) evidence the blind token **only** — their `head_sha` predates
+  the binding — and the `||` fallback branch has never executed in CI; both are now stated as
+  inference rather than as proof. The register also now carries the measured scheduled-run
   history — every scheduled run from 2026-09-26 through 2026-10-17 failed, the first two as a false
   DRIFT and the last two as an honest UNEVALUATED — replacing S1-002's understated "red for six
   days", and notes that no *scheduled* run has evaluated the allow-list yet (first due
