@@ -176,6 +176,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- Two documented instructions that could not be followed, found by **executing** them rather than
+  reading them. `docs/runbooks.md` RB-07's scheduled-run guard used a `jq` expression that adds a
+  number to a string, so it errored inside `$( )`, left both shell variables empty and printed a
+  blank verdict while still exiting 0 — an inert check that reads as a judgement. Replaced with a
+  tab-separated interpolation and run verbatim out of the runbook file to confirm its output.
+  RB-03 step 5 also told the operator to update a rotation log in `jol-secrets`, a repository with
+  no commits at all (`size=0`, `pushed_at` equals `created_at`); it now states that, says where the
+  record goes instead, and S1-009 carries the consequence for the incident-response path
 - S1-002 residual closed — the scheduled Compliance Scan can now evaluate the whole allow-list.
   `ORG_READ_TOKEN` was minted and stored as a `jol-control` repository secret, and CI run
   **39255407378** (at `1a66742`) reports `"evaluated": true`, `"github_count": 40`,

@@ -539,6 +539,13 @@ posture — signed commits, linear history, force-push and deletion blocks, `enf
 seven repositories that posture exists in state and nowhere else. The claim "governance
 repositories are protected" is therefore false for 7 of 11 of them, and an auditor testing one
 of them would find nothing.  
+**The emptiness also breaks the procedures that point into those repositories** (measured
+2026-10-19): `docs/runbooks.md` RB-03 — the secret-exposure response — step 4 files an incident in
+`jol-incident-response` and step 5 updates a rotation log in `jol-secrets`, and neither repository
+has a single commit (`size=0`, `pushed_at` equals `created_at` at 2026-09-24T14:39:53Z). So the
+documented answer to "a credential leaked" cannot be completed as written: it would require
+authoring those repositories' first commits under incident pressure. RB-03 now says so inline and
+names where the record actually goes; the underlying gap is this finding.  
 **Consequence for the next apply (inference, labelled):** a refresh will read 404 for those
 seven instances, drop them, and then propose to re-create them; a create against a repository
 with no branch is expected to fail or to be accepted and remain inert. Not executed in this
