@@ -64,7 +64,13 @@ refuses to conclude anything when its own enumeration is partial.
    ```
 3. Force-push cleaned history (requires temporary branch protection override)
 4. File incident in `jol-incident-response`
-5. Update rotation log in `jol-secrets`
+5. Record the rotation in `jol-secrets`' rotation log — **which does not exist yet**. That
+   repository is empty (`size=0`, and `pushed_at` equals `created_at` at 2026-09-24T14:39:53Z,
+   verified 2026-10-19; it is one of the seven governance-tier empties in S1-009), so there is no
+   branch, no file and no history to update. Until it is populated, the rotation record goes into
+   the affected credential's own inventory table (RB-07 for `ORG_READ_TOKEN`) and, if the exposure
+   was real, into the findings register — and `jol-incident-response` in step 4 is empty too, so an
+   incident filed "there" means creating the repository's first commit, not appending to a log
 6. Review `policy/compliance-gates.yml` secret_scan remediation steps
 
 ## RB-04: Update Compliance Gate
@@ -227,6 +233,32 @@ the organization is auto-approved, so no access request has to be cleared.
    ```
    Accepting evidence is `"evaluated": true` with `"github_count": 40` (39 means the token is
    still private-blind). Baseline: run 39255407378 at `1a66742`, 2026-10-19.
+
+   **Guard any scheduled-run check against a stale capture.** `gh run list --event schedule
+   --limit 1` returns the newest *scheduled* run, and until 2026-10-24 that is a pre-binding
+   failure whose log reads `"github_count": 39` — indistinguishable in shape from a credential
+   that just broke. Assert the date before interpreting it:
+   ```bash
+   read -r R RD <<< "$(gh run list --repo journeyoflife-org/jol-control \
+     --workflow compliance-scan.yml --event schedule --limit 1 --json databaseId,createdAt \
+     --jq '.[0] | "\(.databaseId)\t\(.createdAt)"')"
+   if [[ "$RD" < "2026-10-24" ]]; then
+     echo "No scheduled run since the binding yet (latest: $RD  run $R) — nothing to judge"
+   else
+     gh run view "$R" --repo journeyoflife-org/jol-control --log \
+       | grep -aE '"evaluated"|"github_count"|NO DRIFT|UNEVALUATED'
+   fi
+   ```
+   Written exactly as tested on 2026-10-19, when it correctly answered `No scheduled run since the
+   binding yet (latest: 2026-10-17T06:47:01Z run 39011182828)`. The `--jq` form matters: `jq`
+   cannot add a **number** to a string, so `'.[0].databaseId + " " + .[0].createdAt'` is an error,
+   and because it fails inside `$( )` both variables come back **empty** — the guard then prints
+   "latest:  run " and still exits 0, which reads as a verdict rather than as the broken command it
+   is. Interpolating into one tab-separated string is what makes it work.
+   Note that expiry needs no separate detector: the exit-2 annotation already names "missing,
+   expired, or lacks private-repository read" as its own cause, so a lapsed token turns the weekly
+   job red by design. What is **not** automated is advance warning — the deadline above is a
+   documented date, not a gate, and becomes a red job only after the credential is already dead.
 5. Record the mint in the inventory below, and cite the run id in the findings register.
 
 ### Inventory
