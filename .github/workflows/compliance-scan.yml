@@ -97,11 +97,12 @@ jobs:
         # public repositories (finding S14: that blindness once failed the weekly scan while
         # `make drift` on the host reported NO DRIFT). Red either way — an unverified
         # compliance control must never be presented as a passing one.
-        # ORG_READ_TOKEN is a read-only org PAT that, once a human sets it as a repository
-        # secret on jol-control, can enumerate private repositories. It is preferred here so
-        # the scheduled scan becomes fully evaluating. While it is unset the expression falls
-        # back to GITHUB_TOKEN and the job still reports UNEVALUATED — no behaviour change
-        # until the credential exists, and it never silently reads as a PASS.
+        # ORG_READ_TOKEN is the read-only org PAT documented in docs/runbooks.md RB-07; it has
+        # been set as a jol-control repository secret since 2026-10-19, which is what makes this
+        # job evaluate private repositories at all (verified: run 39255407378 reported
+        # "evaluated": true with github_count 40, against 39 for the runner token). The fallback
+        # is deliberate: if the secret is removed or expires, the expression reverts to
+        # GITHUB_TOKEN and the job reports UNEVALUATED rather than a false DRIFT or a false PASS.
         env:
           GITHUB_TOKEN: ${{ secrets.ORG_READ_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -114,7 +115,7 @@ jobs:
             1) echo "::error title=Drift detected::The allow-list and the organization genuinely disagree; see the job log for the named repositories."
                echo "Drift detection: DRIFT DETECTED (exit 1)." >> "$GITHUB_STEP_SUMMARY"
                exit 1 ;;
-            2) echo "::error title=Drift detection UNEVALUATED::This token cannot enumerate private repositories, so absence cannot be concluded. ORG_READ_TOKEN is already preferred by this step when set; create a read-only org PAT and set it as a jol-control repository secret, or run 'make drift' on the control-plane host. An unevaluated control is not a passing control."
+            2) echo "::error title=Drift detection UNEVALUATED::ORG_READ_TOKEN is missing, expired, or lacks private-repository read, so absence cannot be concluded from this enumeration. Mint or rotate it per docs/runbooks.md RB-07, or run 'make drift' on the control-plane host. An unevaluated control is not a passing control."
                echo "Drift detection: UNEVALUATED (exit 2) — token cannot see private repos." >> "$GITHUB_STEP_SUMMARY"
                exit 1 ;;
             *) echo "::error title=Drift detection crashed::Unexpected exit code $rc — treated as unevaluated."

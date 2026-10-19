@@ -50,7 +50,8 @@ here went wrong) and *Process slip* (an edit made from a stale clone).
 ### S1-002: Drift detection reported "cannot see" as "does not exist", and a blind run as passing
 
 **Discovered:** 2026-10-09  
-**Status:** FIXED (checker) — residual OPEN: CI still cannot evaluate, see remediation  
+**Status:** FIXED — checker (2026-10-09) and CI credential (2026-10-19, run 39255407378); the
+residual is closed, the new dependency is documented in `docs/runbooks.md` RB-07  
 **Finding:** The scheduled Compliance Scan failed from run 37107745958 (2026-10-03) with
 `in_defined_not_github: ["jol-dr"]`. Nothing was missing. `gh api
 repos/journeyoflife-org/jol-dr` returns `visibility=PRIVATE`, `gh repo list
@@ -75,13 +76,36 @@ with the remedy inline, and `validate-repos` runs the new 11-test self-test on e
 **Evidence:** `tests/fixtures/drift_detect/live_host_user_token.json` (real capture, 41 rows,
 one PRIVATE) and `ci_github_actions_token.json` (the Actions-token view, 39 rows, no private
 visible) — `python3 tests/test_drift_gate.py` → `PASSED — 11 drift-gate tests, 0 failures.`  
-**Residual and remediation:** the scheduled job remains UNEVALUATED until it gets a token
-that can read the organization. Minimum-scope option: a fine-grained PAT with
-*Organization → Members: Read* and repository read access restricted to the org, stored as
-`secrets.ORG_READ_TOKEN`, referenced by the drift step in place of `secrets.GITHUB_TOKEN`.
-Alternative: run drift on this host (where such a credential already exists) and ship the
-JSON report. Until one of those is in place, no CI run of this control may be cited as
-evidence that the allow-list matches the organization.  
+**Residual and remediation — CLOSED 2026-10-19.** The scheduled job was UNEVALUATED until it
+got a token that can read the organization. That token now exists and is bound: a fine-grained
+PAT stored as the `jol-control` repository secret `ORG_READ_TOKEN`, preferred by the drift step
+over `secrets.GITHUB_TOKEN` in `compliance-scan.yml`. **Read from the Settings UI on 2026-10-19**
+(it cannot be read programmatically: `GET /orgs/journeyoflife-org/personal-access-tokens` answers
+`404` from this host and GitHub documents that endpoint as *"Only GitHub Apps can use this
+endpoint"*): expires **2027-01-17** — exactly the 90 days requested — resource owner
+`journeyoflife-org`, repository access "all repositories owned by the organization", Repository
+permissions **"Read access to code and metadata"** (Contents + Metadata read-only) and Organization
+permission **"Read access to members"** (Members read-only) — every attribute read off the token's
+detail page, nothing inferred. The strongest verification remains behavioural:
+the enumeration in CI now contains a private repository, which no scope-light credential can
+produce. Proof is the CI run, not the mint:
+run **39255407378** at `headSha=1a66742` printed `"evaluated": true`, `"github_count": 40`,
+`"matched_count": 40` and `NO DRIFT — All 40 repos match`, where the blind runner token's view
+is 39 rows. Two dispatches at the preceding commit (`39254606046`, `39254610945`) failed as
+expected, which is what distinguishes a working binding from a decorative one.
+
+What this control now depends on, and how it fails: the verdict is only as durable as a
+credential with an expiry. If `ORG_READ_TOKEN` is unset, deleted, or left to lapse, the step
+falls back to `secrets.GITHUB_TOKEN`, the enumeration loses `jol-dr`, and the job reports
+UNEVALUATED (exit 2) — an honest red, never a fabricated pass and never a false DRIFT. Minting,
+verification and rotation are `docs/runbooks.md` RB-07. Two traps measured while closing this:
+(a) a `workflow_dispatch` run executes the workflow file **as published on the default branch**,
+so interpreting a run before the `env:` binding is pushed yields a wrong conclusion in both
+directions; (b) `export GH_TOKEN=""` (or a mistyped paste into `read -rs GH_TOKEN`) makes every
+later `gh` call in that shell answer `401 Bad credentials` — `gh` does not fall back to the
+keyring once the variable is *set*, so an empty value reads as a broken token. `401` is a
+credential-shape failure; an under-scoped fine-grained PAT answers `403 Resource not accessible
+by personal access token` or omits rows instead.  
 **Files affected:** `scripts/drift_detect.py`, `tests/test_drift_gate.py`,
 `tests/fixtures/drift_detect/`, `.github/workflows/compliance-scan.yml`, `Makefile`
 

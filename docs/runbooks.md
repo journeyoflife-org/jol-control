@@ -22,9 +22,10 @@ gh repo view journeyoflife-org/<repo-name> --json url,visibility
 python3 scripts/drift_detect.py     # 0 = evaluated, no drift
                                     # 1 = drift, the named repos are the evidence
                                     # 2 = UNEVALUATED — not a pass and not a failure:
-                                    #     the token could not see the whole org. Run it
-                                    #     here, not in CI (see S1-002 in
-                                    #     docs/drift-findings.md)
+                                    #     the token could not see the whole org. CI now
+                                    #     evaluates via secrets.ORG_READ_TOKEN (RB-07, and
+                                    #     S1-002 in docs/drift-findings.md); a run on this
+                                    #     host is the independent second measurement
 ```
 
 A new repository must be declared in `repos/*.yml` **and** exist in the organization;
@@ -163,3 +164,109 @@ GitHub Support.
 `gh api -X PUT repos/journeyoflife-org/.github/rulesets/22978013 --input /tmp/rs-before.json`
 — the snapshot from step 2 must be the payload with only the identity fields (`id`, `node_id`,
 `created_at`, `updated_at`, `_links`, `current_user_can_bypass`) removed.
+
+## RB-07: Mint or Rotate `ORG_READ_TOKEN` (the CI drift-detection credential)
+
+`secrets.ORG_READ_TOKEN` is the only credential CI is allowed to hold for organization reads
+(`main.tf:22-28`): the scheduled Compliance Scan's drift job needs it to enumerate **private**
+repositories, because `secrets.GITHUB_TOKEN` sees public ones only. Without it the job reports
+UNEVALUATED (exit 2) and the allow-list control is unproven in CI — see S1-002. It is read-only
+by policy and must never be used for `terraform apply`; the apply path runs host-side.
+
+### Required settings (a token that misses any row here reproduces the blindness)
+
+| Field | Value | Consequence if wrong |
+|---|---|---|
+| Type | Fine-grained PAT | Classic `repo` also works but is write-capable — record it as a deviation |
+| Resource owner | **journeyoflife-org** | owner = personal account → org private repos 404 |
+| Repository access | **All repositories** | "Public repositories" or a selection without `jol-dr` → exit 2 forever |
+| Repository permissions | Metadata **Read-only**, Contents **Read-only** | Contents not required, Metadata is automatic; anything *write* here is over-privilege |
+| Organization permissions | Members **Read-only** | without it the org enumeration can omit private rows |
+| Expiration | 90 days | no expiry is an audit finding |
+| Name | `jol-control-drift-read-<YYYY-MM-DD>` | rotation provenality: an unnamed token cannot be retired safely |
+
+Prefilled form: `https://github.com/settings/personal-access-tokens/new?name=jol-control-drift-read&description=Read-only+org+repo+enumeration+for+jol-control+drift+gate+(S1-002)&target_name=journeyoflife-org&expires_in=90&metadata=read&contents=read&members=read`
+
+Mint it while signed in as an account that satisfies the organization's secure-2FA requirement
+(`gh api user --jq '{login,two_factor_authentication}'` → `JourneyOfLife`, `true`). The owner of
+the organization is auto-approved, so no access request has to be cleared.
+
+### Steps
+1. Mint per the table. Never paste the value into a chat, an agent session, a file, or a
+   `--body`: a credential recorded in a transcript is a credential that must be rotated.
+2. **Verify before storing**, in a subshell, so nothing leaks into the interactive environment:
+   ```bash
+   read -rs T
+   GH_TOKEN="$T" gh api user --jq '"identity: \(.login)"'
+   GH_TOKEN="$T" gh repo list journeyoflife-org --limit 500 --json name,visibility \
+     --jq '"rows="+(length|tostring)+" private="+([.[]|select(.visibility=="PRIVATE")]|length|tostring)'
+   GH_TOKEN="$T" python3 scripts/drift_detect.py; echo "rc=$?"   # want rows=41 private=1, rc=0
+   unset T
+   ```
+   Do **not** `export GH_TOKEN` in a shell you still intend to use: `gh` prefers the variable
+   over the keyring, so an empty or mistyped value makes every later call answer `401 Bad
+   credentials` and reads as a broken token. `401` = the credential value; `403 Resource not
+   accessible by personal access token` = the scope.
+3. Store it as a **repository** secret (an org secret with `visibility: private` is invisible to
+   this public repository). Set the new value before deleting the old token:
+   ```bash
+   gh secret set ORG_READ_TOKEN --repo journeyoflife-org/jol-control   # hidden prompt
+   gh secret list --repo journeyoflife-org/jol-control
+   ```
+4. Prove it in CI — a name read-back proves placement, not function. The binding must already be
+   published on `main`, because `workflow_dispatch` runs the workflow file **as it exists on the
+   default branch**, never your working tree:
+   ```bash
+   gh api repos/journeyoflife-org/jol-control/contents/.github/workflows/compliance-scan.yml \
+     --jq .content | base64 -d | grep -n 'secrets.ORG_READ_TOKEN'   # the env: line, not just prose
+   gh workflow run compliance-scan.yml --repo journeyoflife-org/jol-control
+   R=$(gh run list --repo journeyoflife-org/jol-control --workflow compliance-scan.yml \
+        --limit 1 --json databaseId --jq '.[0].databaseId')
+   gh run view "$R" --repo journeyoflife-org/jol-control --log \
+     | grep -aE '"evaluated"|"github_count"|NO DRIFT|UNEVALUATED'
+   ```
+   Accepting evidence is `"evaluated": true` with `"github_count": 40` (39 means the token is
+   still private-blind). Baseline: run 39255407378 at `1a66742`, 2026-10-19.
+5. Record the mint in the inventory below, and cite the run id in the findings register.
+
+### Inventory
+No guarantee of a programmatic read: `GET /orgs/journeyoflife-org/personal-access-tokens` answers
+`404` from this host, and GitHub documents the endpoint as **"Only GitHub Apps can use this
+endpoint"**. The sibling control plane did get a full inventory from the analogous call on
+jolarca-dev (2026-10-17), so availability evidently depends on what the acting credential *is* —
+this host's `gh` login sends no `x-oauth-scopes` header, i.e. it is not a scope-carrying OAuth
+token. Treat it as unavailable rather than chasing a scope: do not re-derive the token's grants
+from the API.
+
+So the authoritative read of name, granted permissions, repository selection and `expires_at` is
+the Settings UI: `https://github.com/settings/tokens?type=beta` (list, with expiry and last-used)
+and the token's detail page (full permission set). Transcribe those into this table by hand at
+mint time; an empty cell means the record is unverified, not that the token is wrong. The
+behavioural proof (RB-07 step 2's private-repository count) is what actually validates the scope.
+
+| Name | Minted | Expires | Granted permissions (read from the UI) | Verified in CI |
+|---|---|---|---|---|
+| `jol-control-drift-read` | 2026-10-19 | **2027-01-17** (exactly 90 days) | Resource owner `journeyoflife-org`; repository access "all repositories owned by the organization"; Repository permissions **"Read access to code and metadata"** (Contents + Metadata read-only); Organization permission **"Read access to members"** (Members read-only) | run 39255407378 |
+
+**Rotate before 2027-01-17.** The scheduled scan runs Saturdays 02:00 UTC, so the first run that
+can fail from expiry is 2027-01-16 — one week of slack, not a margin. Doing it in December also
+avoids the trap below.
+
+> **Do not press "Update" while inspecting the token.** The detail page opens in edit form, and
+> the adjacent controls are `Update`, `Regenerate token` and `Delete`. Leaving an inspection by
+> clicking `Update` re-saves the token, and `Regenerate token` mints a **new value** that
+> silently orphans the stored secret: the drift job then falls back to `secrets.GITHUB_TOKEN`
+> and reports UNEVALUATED. Cancel out of the form; if a regeneration ever does happen, re-run
+> step 3 before anything else.
+
+Every attribute of this credential is now read from the token's own detail page rather than
+inferred from the mint URL. That page is the only source GitHub offers — the API equivalent is
+GitHub-App-only — so re-read it after **any** permission edit, and treat step 4's private-repository
+count as the backstop that catches a grant narrowed or widened without a corresponding change to
+this table.
+
+### Rollback / degradation
+Deleting the secret is safe and honest: the step falls back to `secrets.GITHUB_TOKEN`, the drift
+job returns exit 2, and the annotation says UNEVALUATED. There is no path by which losing this
+credential produces a green drift verdict — that property is what `tests/test_drift_gate.py`
+fixture `ci_github_actions_token.json` pins.

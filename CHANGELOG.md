@@ -112,8 +112,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discriminate token scope, because HTML answers 404 for a private repository even to a token
   that reads it through the API; and a workflow run whose name matches a reusable workflow is
   not proof that a caller resolved it (`jol-docs`' green `compliance-check` is its own file)
+- `docs/runbooks.md` RB-07 — "Mint or Rotate `ORG_READ_TOKEN`", the read-only fine-grained PAT
+  the CI drift job needs to see private repositories. Carries the scope table with the consequence
+  of each wrong row (resource owner, **All repositories**, Metadata/Contents read, Members read,
+  90-day expiry, name pattern), the pre-filled token form, verify-before-store commands that prove
+  the token can enumerate `jol-dr` **before** it is saved as a secret, the CI proof that a name
+  read-back cannot substitute for, the failure signature that separates `401 Bad credentials` (the
+  credential value) from `403 Resource not accessible by personal access token` (the scope), an
+  inventory table whose `expires_at` must be transcribed from Settings because `GET
+  /orgs/journeyoflife-org/personal-access-tokens` answers `404` from this host, and the degradation
+  note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
+- `.github/workflows/compliance-scan.yml`: the drift step binds `secrets.ORG_READ_TOKEN ||
+  secrets.GITHUB_TOKEN` instead of the runner token alone, and its exit-2 annotation now points at
+  RB-07 rather than telling the operator to create a credential that already exists. The fallback
+  is what keeps this honest: an unset or expired secret degrades the job to UNEVALUATED, never to a
+  pass and never to the old false DRIFT
 - `AGENTS.md` §2 re-measured 2026-10-19 and gained two rows: the ruleset figure is restated as
   **20 active requirement-bearing rulesets across 19 repositories** (17 requiring ≥1 approving
   review, 19 requiring code-owner review) out of 24 rulesets in the fleet, replacing the less
@@ -161,6 +176,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   protected` at all.
 
 ### Fixed
+- S1-002 residual closed — the scheduled Compliance Scan can now evaluate the whole allow-list.
+  `ORG_READ_TOKEN` was minted and stored as a `jol-control` repository secret, and CI run
+  **39255407378** (at `1a66742`) reports `"evaluated": true`, `"github_count": 40`,
+  `"matched_count": 40`, `NO DRIFT — All 40 repos match` where the runner token's enumeration
+  returned 39 rows and could not conclude absence at all. Two dispatch runs at the preceding
+  commit (`39254606046`, `39254610945`) failed as expected, which is the control that distinguishes
+  a working binding from a decorative one. `AGENTS.md` §2's "CI drift detection verifies the whole
+  allow-list" row is restated accordingly, together with the credential dependency it created
 - ADR-013 (`jol-docs#4`) revised twice before acceptance, both times because verification caught
   the draft rather than a reviewer: **v0.2.0** conformed the heading to the registry's short-title
   style after CI run 39028870034 failed `markdownlint` MD013 on a 123-character sentence heading
