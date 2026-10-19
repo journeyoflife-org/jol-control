@@ -20,8 +20,12 @@ terraform {
 }
 
 # ── GitHub Provider ──────────────────────────────────────────────────────────
-# Authentication via GITHUB_TOKEN environment variable (set in CI/CD)
-# The token requires: admin:org, repo, write:org, admin:repo_hook
+# Authenticated via the GITHUB_TOKEN environment variable. A full apply needs
+# admin:org, repo, write:org, admin:repo_hook — scopes the runner-ephemeral token
+# does NOT carry. Those scopes are therefore supplied only HOST-SIDE by `make
+# apply`; CI never holds an org-write token (apply jobs are gated off, AGENTS.md
+# §2). CI's only permitted credential is a read-only org PAT (ORG_READ_TOKEN),
+# used solely for private-repo enumeration in compliance-scan.yml drift detection.
 provider "github" {
   owner = var.github_org
   # token is read from GITHUB_TOKEN env var — NEVER hardcode
