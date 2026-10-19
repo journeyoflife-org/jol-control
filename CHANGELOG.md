@@ -182,8 +182,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"matched_count": 40`, `NO DRIFT — All 40 repos match` where the runner token's enumeration
   returned 39 rows and could not conclude absence at all. Two dispatch runs at the preceding
   commit (`39254606046`, `39254610945`) failed as expected, which is the control that distinguishes
-  a working binding from a decorative one. `AGENTS.md` §2's "CI drift detection verifies the whole
-  allow-list" row is restated accordingly, together with the credential dependency it created
+  a working binding from a decorative one. The register also now carries the measured scheduled-run
+  history — every scheduled run from 2026-09-26 through 2026-10-17 failed, the first two as a false
+  DRIFT and the last two as an honest UNEVALUATED — replacing S1-002's understated "red for six
+  days", and notes that no *scheduled* run has evaluated the allow-list yet (first due
+  2026-10-24). `AGENTS.md` §2's "CI drift detection verifies the whole allow-list" row is restated
+  accordingly, together with the credential dependency it created
 - ADR-013 (`jol-docs#4`) revised twice before acceptance, both times because verification caught
   the draft rather than a reviewer: **v0.2.0** conformed the heading to the registry's short-title
   style after CI run 39028870034 failed `markdownlint` MD013 on a 123-character sentence heading

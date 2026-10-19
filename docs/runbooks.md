@@ -248,9 +248,11 @@ behavioural proof (RB-07 step 2's private-repository count) is what actually val
 |---|---|---|---|---|
 | `jol-control-drift-read` | 2026-10-19 | **2027-01-17** (exactly 90 days) | Resource owner `journeyoflife-org`; repository access "all repositories owned by the organization"; Repository permissions **"Read access to code and metadata"** (Contents + Metadata read-only); Organization permission **"Read access to members"** (Members read-only) | run 39255407378 |
 
-**Rotate before 2027-01-17.** The scheduled scan runs Saturdays 02:00 UTC, so the first run that
-can fail from expiry is 2027-01-16 — one week of slack, not a margin. Doing it in December also
-avoids the trap below.
+**Rotate before 2027-01-17.** That expiry falls on a Sunday and the scan runs on Saturdays, so
+Sat **2027-01-16** is the last scheduled run that can pass and Sat **2027-01-23** is the first that
+will report UNEVALUATED — a missed rotation is therefore discovered up to a week after it happens,
+and GitHub delivered this `cron: 0 2 * * 6` between 06:47 and 08:17 UTC in every measured week, so
+don't reason about the deadline as if 02:00 were precise. Rotate in December.
 
 > **Do not press "Update" while inspecting the token.** The detail page opens in edit form, and
 > the adjacent controls are `Update`, `Regenerate token` and `Delete`. Leaving an inspection by

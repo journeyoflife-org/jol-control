@@ -94,6 +94,24 @@ run **39255407378** at `headSha=1a66742` printed `"evaluated": true`, `"github_c
 is 39 rows. Two dispatches at the preceding commit (`39254606046`, `39254610945`) failed as
 expected, which is what distinguishes a working binding from a decorative one.
 
+**Scheduled-run history, measured 2026-10-19** (`gh run list --event schedule`) — every scheduled
+run of this control has failed since at least the start of the retained history, four consecutive
+weeks, and the *reason* changed midway:
+
+| Run | Date | Drift job verdict |
+|---|---|---|
+| 36226576141 | 2026-09-26 | false **DRIFT** — `in_defined_not_github`, `"github_count": 39` |
+| 37107745958 | 2026-10-03 | false **DRIFT** — the run this finding was opened for |
+| 38037365416 | 2026-10-10 | **UNEVALUATED** — `"evaluated": false`, honest red, first run after the checker rewrite |
+| 39011182828 | 2026-10-17 | **UNEVALUATED** — honest red, last run before the credential existed |
+
+So the "red for six days" in the Impact paragraph understates it: the control was red for four
+weeks, the first two of those for the wrong reason and the last two for the right one. No
+**scheduled** run has yet evaluated the allow-list — the proofs above are `workflow_dispatch`,
+which executes the same job; the first scheduled verdict is due Saturday 2026-10-24. Note also
+that GitHub delivered every one of those `cron: 0 2 * * 6` runs between 06:47 and 08:17 UTC, so
+schedule timing must not be assumed precise when reasoning about a deadline.
+
 What this control now depends on, and how it fails: the verdict is only as durable as a
 credential with an expiry. If `ORG_READ_TOKEN` is unset, deleted, or left to lapse, the step
 falls back to `secrets.GITHUB_TOKEN`, the enumeration loses `jol-dr`, and the job reports
