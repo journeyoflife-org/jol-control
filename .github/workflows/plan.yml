@@ -38,6 +38,10 @@ jobs:
         run: |
           python3 scripts/validate_repos.py
           echo "All repo YAML definitions are valid."
+      - name: Check secret inventory expiry
+        run: |
+          chmod +x scripts/check_secret_inventory.sh
+          ./scripts/check_secret_inventory.sh docs/SECRETS_INVENTORY.md
 
       - name: Terraform Init
         run: terraform init -input=false
