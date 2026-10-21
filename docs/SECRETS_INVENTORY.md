@@ -3,14 +3,14 @@
 | Field | Value |
 | --- | --- |
 | Entity | journeyoflife-org (Catholic charity, owns its hardware) |
-| Type | Metadata register. **Never record a secret value here** — values live in `~/.password-store/jol/` (age-encrypted) or the GitHub Actions secret store. |
+| Type | Metadata register. **Never record a secret value here** — values live in the age vault `~/.vault/jol/` (encrypted with the host `vault.sh`, reusing the AGE-1 identity) or the GitHub Actions secret store. |
 | Consumed by | `scripts/check_secret_inventory.sh` (run manually or wire into `plan.yml`) |
 | Framework basis | ISO 27001:2022 A.5.17, A.8.2, A.5.18; SOC 2 CC6.1/CC6.2/CC6.3; GDPR Art. 5(1)(f), Art. 32 |
 | Boundary 1 | This register lists only credentials `jol-control` depends on. Shared human/root credentials appear as reference rows (this plane's dependency), never as merged registers. |
 
 ## Register
 
-Columns: `secret_id | vault_path (pass) | tier | type | entity | storage_location | expires | rotation | last_verified | blast_radius | control_id | recovery_path`
+Columns: `secret_id | vault_path (age vault) | tier | type | entity | storage_location | expires | rotation | last_verified | blast_radius | control_id | recovery_path`
 
 | secret_id | vault_path | tier | type | entity | storage_location | expires | rotation | last_verified | blast_radius | control_id | recovery_path |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -30,3 +30,7 @@ policy; `never` = root/ephemeral, on-compromise only; `unknown` = finding, not a
 3. After rotation update `expires` + `last_verified` in the same commit.
 4. The vault is backed up as a git bundle per the host backup runbook
    (`/opt/jol/backup/tfstate/vault-<UTC>.bundle`, `umask 077`).
+5. **`pass`/`~/.password-store` is deprecated:** it was never `pass init`'d and the only
+   GPG key (`609F7926A8254CDB`) is signing-only `[SC]` with no encryption subkey, so it
+   cannot encrypt. The age vault (`~/.vault`) supersedes it; `~/.password-store` holds no
+   real secrets.
