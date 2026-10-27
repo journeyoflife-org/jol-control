@@ -48,7 +48,20 @@ if [ ! -d "$DEST" ]; then
   exit 1
 fi
 
-NEWEST="$(find "$DEST" -maxdepth 1 -type f -name '*.age' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+# Pin the snapshot NAME, not just "any .age". Measured 2026-10-27: another tree
+# (`jolarca-control`) began writing its own `terraform.tfstate.s17.*.age` into this same destination,
+# and a glob of `*.age` let its newest file satisfy this guard - `RC=0 nothing to do` while the
+# jol-control inventory was hours stale. A freshness gate that another project's artefact can pass is
+# not a freshness gate. The convention is the one backup_state.sh writes (and the RB-08 restore half
+# globs): <repo>-terraform.tfstate.<stamp>.age.
+SNAP_GLOB="$(basename "$REPO")-terraform.tfstate.*.age"
+NEWEST="$(find "$DEST" -maxdepth 1 -type f -name "$SNAP_GLOB" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+FOREIGN="$(find "$DEST" -maxdepth 1 -type f -name '*.age' ! -name "$SNAP_GLOB" 2>/dev/null | wc -l)"
+if [ "$FOREIGN" -gt 0 ]; then
+  say "NOTE: $FOREIGN *.age file(s) in $DEST are not this repository's snapshots and are excluded"
+  say "      (expected pattern: $SNAP_GLOB). A shared destination is how one project's backup"
+  say "      masks another's; see runbooks.md RB-09."
+fi
 if [ -n "$NEWEST" ]; then
   # A non-numeric `date +%s` must not reach $(( )). It happened: a test put a stub `date` on PATH and
   # the guard died with "value too great for base" - in production the same shape comes from a broken
@@ -59,7 +72,33 @@ if [ -n "$NEWEST" ]; then
                  exit 2 ;;
   esac
   AGE_H=$(( (NOW - NEWEST_TS) / 3600 ))
-  if [ "$AGE_H" -lt "$MAX_AGE_H" ]; then
+  # A snapshot from the FUTURE is not "fresh", it is a broken clock or a planted file, and a negative
+  # age satisfies every threshold below it. Observed while testing this very guard with a 2099 mtime:
+  # "newest snapshot is -632713h old (< 24h) - nothing to do", exit 0.
+  if [ "$AGE_H" -lt 0 ]; then
+    say "UNEVALUATED: $NEWEST has a future mtime ($(( -AGE_H ))h ahead of this host) - refusing to treat it as fresh"
+    exit 2
+  fi
+  # Cross-check the identity of the snapshot against the state it is supposed to protect. Timestamps
+  # are trivially forged; the lineage is a UUID terraform generated once per state file.
+  LIVE_LIN="$(jq -r '.lineage // empty' "$REPO/terraform.tfstate" 2>/dev/null)"
+  SN_LIN="$(sed -n 's/^lineage  *: //p' "$NEWEST.info" 2>/dev/null)"
+  # MISMATCH=1 forces a refresh past the freshness shortcut. An earlier revision of this block printed
+  # "DIFFERENT inventory - refreshing anyway" and then fell into the `nothing to do` branch and exited 0,
+  # so the message contradicted the verdict and a foreign snapshot named like ours still passed the gate.
+  MISMATCH=0
+  if [ -n "$LIVE_LIN" ] && [ -n "$SN_LIN" ] && [ "$LIVE_LIN" != "$SN_LIN" ]; then
+    say "FAIL: $(basename "$NEWEST") protects lineage $SN_LIN; this state is lineage $LIVE_LIN."
+    say "      That is a DIFFERENT inventory. Refreshing regardless of its age."
+    MISMATCH=1
+  elif [ -z "$SN_LIN" ] && [ -n "$LIVE_LIN" ]; then
+    # Unknown identity is not a pass. Same rule as everywhere else in this repository.
+    say "UNEVALUATED: $(basename "$NEWEST") has no lineage recorded, so this guard cannot tell whose"
+    say "             state it protects. Refusing to call it fresh. Snapshots written by"
+    say "             backup_state.sh always carry the field; re-run one to restore the evidence."
+    exit 2
+  fi
+  if [ "$MISMATCH" = 0 ] && [ "$AGE_H" -lt "$MAX_AGE_H" ]; then
     say "OK: newest snapshot is ${AGE_H}h old (< ${MAX_AGE_H}h) - nothing to do"
     exit 0
   fi

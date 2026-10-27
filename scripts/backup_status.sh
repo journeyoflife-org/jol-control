@@ -30,12 +30,22 @@ unk()  { printf '  %-26s %s\n' "$1" "$2"; [ "$rc" -lt 2 ] && rc=2; }
 
 echo "state backup status ($DEST, freshness limit ${MAX_AGE_H}h)"
 
-NEWEST="$(find "$DEST" -maxdepth 1 -type f -name '*.age' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+# Pin the name. `*.age` in this destination also matches snapshots another tree writes there - seen
+# today, `terraform.tfstate.s17.*.age` from jolarca-control - and the newest of those would be reported
+# as ours. Same convention as backup_state.sh and the RB-08 restore glob.
+SNAP_GLOB="$(basename "$REPO")-terraform.tfstate.*.age"
+NEWEST="$(find "$DEST" -maxdepth 1 -type f -name "$SNAP_GLOB" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+FOREIGN="$(find "$DEST" -maxdepth 1 -type f -name '*.age' ! -name "$SNAP_GLOB" 2>/dev/null | wc -l)"
+if [ "$FOREIGN" -gt 0 ]; then
+  note "foreign snapshots" "$FOREIGN *.age file(s) here are not ours (pattern: $SNAP_GLOB) - shared destination, see RB-09"
+fi
 if [ -z "$NEWEST" ]; then
-  bad "newest snapshot" "NONE in $DEST - is $DEST mounted? (findmnt -T $DEST)"
+  bad "newest snapshot" "NONE matching $SNAP_GLOB in $DEST - is $DEST mounted? (findmnt -T $DEST)"
 else
   NOW="$(date +%s)"; THEN="$(stat -c %Y "$NEWEST")"; age_h=$(( (NOW - THEN) / 3600 ))
-  if [ "$age_h" -lt "$MAX_AGE_H" ]; then
+  if [ "$age_h" -lt 0 ]; then
+    unk "newest snapshot" "$NEWEST has a FUTURE mtime ($(( -age_h ))h ahead) - broken clock or planted file, not fresh"
+  elif [ "$age_h" -lt "$MAX_AGE_H" ]; then
     note "newest snapshot" "$(basename "$NEWEST") (${age_h}h old)"
   else
     bad "newest snapshot" "$(basename "$NEWEST") is ${age_h}h old (> ${MAX_AGE_H}h) - the guard is not running"
@@ -58,6 +68,17 @@ if [ -n "$INFO" ] && [ -s "$INFO" ]; then
     no)  note "recovery key decrypted" "no - routine run, only the recipient was supplied" ;;
     *)   unk  "recovery key decrypted" "not recorded in this sidecar" ;;
   esac
+  # Which inventory does this snapshot actually protect? The sidecar records the lineage UUID terraform
+  # generated once per state file; a matching name and a fresh mtime prove nothing on a shared disk.
+  slin="$(sed -n 's/^lineage  *: //p' "$INFO")"
+  blin="$(jq -r '.lineage // empty' "$REPO/terraform.tfstate" 2>/dev/null)"
+  if [ -n "$slin" ] && [ -n "$blin" ] && [ "$slin" != "$blin" ]; then
+    bad "snapshot lineage" "$slin != live state $blin - that snapshot protects a DIFFERENT inventory"
+  elif [ -n "$slin" ] && [ -n "$blin" ]; then
+    note "snapshot lineage" "$slin (matches the live state)"
+  else
+    unk "snapshot lineage" "not recorded on either side - identity UNVERIFIED"
+  fi
 else
   [ -n "$NEWEST" ] && unk "sidecar" "missing for $(basename "$NEWEST") - cannot confirm the expected md5"
 fi

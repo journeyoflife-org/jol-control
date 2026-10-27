@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 45 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 50 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -328,6 +328,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
+  outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
+  `/mnt/jol-backup/jol-state-backup`, the destination RB-08/RB-09 chose for our state. Every consumer
+  picked "newest `*.age`", so its file satisfied our guard: measured live, `OK: newest snapshot is 0h old
+  (< 24h) - nothing to do` exit **0** while our own snapshot was hours old, and `make backup-status`
+  printed the foreign file as ours. A planted 2099 mtime also passed as `newest snapshot is -632713h old
+  (< 24h)` — a negative age is below every threshold. All three consumers now pin the snapshot name to
+  `<repo>-terraform.tfstate.*.age` and announce how many foreign files they ignored, treat a future mtime
+  as UNEVALUATED rather than fresh, and compare the sidecar's `lineage` against the live state's — a
+  mismatch forces a refresh, an absent lineage is refused as unidentified. Cases 46–50; each rule was
+  mutation-tested (name pinning, future-mtime refusal, mismatch force, unidentified refusal) and every
+  mutation was caught by its named case, with the guard restored byte-identically (`md5sum`) after each.
+  **A bug in the fix was caught this way too**: the first lineage block printed "DIFFERENT inventory —
+  refreshing anyway" and then fell through to exit 0, so case 48 asserts the forbidden phrase rather than
+  only the code
+- **The test suites littered the host they verify, and had been doing it for a year.**
+  `tests/test_drift_gate.py` called `tempfile.mkdtemp` twice per run and removed nothing: counted on this
+  host today, **182 `allowlist-*` and 286 `stub-*` directories** in `/tmp`. `tests/test_plan_gate.py`
+  created its empty-plan fixture with `NamedTemporaryFile(delete=False)` and never unlinked it, leaving
+  27 zero-byte `/tmp/tmp*.json`. Both are fixed — scratch dirs are registered and purged via `atexit`
+  (so a *failing* run cleans up too, proven by running a deliberately broken assertion in a mirror tree:
+  delta 0), and the plan fixture unlinks in `finally`. Verified by two consecutive `make test` runs with
+  before/after counts: **delta 0 directories, delta 0 files**. This is not cosmetic: a leftover
+  `allowlist-*` is a directory full of `*.yml` repository definitions sitting outside the repository,
+  one `ls` away from being mistaken for the real `repos/` tree — and `*.age`/`*.decoded` artefacts are
+  not gitignored here, so a harness that forgets where it put things is the exact mechanism that nearly
+  committed plaintext state (S2-012)
 - **A verification command this project recommended to the operator could not fail.** `age --decrypt -i
   <copy> <snapshot> | md5sum` — offered while checking whether the off-machine key copy worked — printed
   `d41d8cd98f00b204e9800998ecf8427e`, the MD5 of *empty input*, and exited 0, because the pipe absorbed

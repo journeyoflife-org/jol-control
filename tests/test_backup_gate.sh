@@ -324,14 +324,20 @@ if [ -f "$GUARD" ]; then
   if [ -d "$W/guardmissing" ]; then fail=$((fail+1)); echo "      FAIL 27 the guard created the destination itself"
   else pass=$((pass+1)); echo "  ok    27 guard did not create the destination"; fi
   mkdir -p "$GD"; : > "$GD/jol-control-terraform.tfstate.20260101T000000Z.age"
+  # The guard now refuses to call a snapshot fresh unless its sidecar names the lineage it protects
+  # (cases 46-50). These three cases are about AGE and device refusal, so the fixture supplies a matching
+  # sidecar and lets them reach the behaviour they were written to assert. In CI there is no
+  # terraform.tfstate, the live lineage reads empty, and the identity rule stays inert by design.
+  printf 'lineage   : %s\nmd5  : fixture\n' "$(jq -r '.lineage // "unknown"' "$REPO/terraform.tfstate" 2>/dev/null || echo unknown)" \
+    > "$GD/jol-control-terraform.tfstate.20260101T000000Z.age.info"
   g 0 "28 fresh snapshot -> nothing to do"       RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" MAX_AGE_H=24
   if grep -q 'nothing to do' "$W/go"; then pass=$((pass+1)); echo "  ok    29 it names the no-op (silent success is not enough)"
   else fail=$((fail+1)); echo "  FAIL  29 succeeded without saying why"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
   # Stale snapshot: the guard must try, and the inner script's device check must stop it (this
   # destination is a temp dir on the state's own disk), surfacing as a refusal not a pass.
   g 1 "30 stale, dest on the state's disk -> refuse" RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" MAX_AGE_H=0
-  if [ "$(find "$GD" -type f | wc -l)" = 1 ]; then pass=$((pass+1)); echo "  ok    31 refused run left no artefact behind"
-  else fail=$((fail+1)); echo "  FAIL  31 artefacts left by a refused run: $(find "$GD" -type f | wc -l)"; fi
+  if [ "$(find "$GD" -type f | wc -l)" = 2 ]; then pass=$((pass+1)); echo "  ok    31 refused run left no artefact behind (snapshot + its sidecar only)"
+  else fail=$((fail+1)); echo "  FAIL  31 artefacts left by a refused run: $(find "$GD" -type f | wc -l) (want 2)"; fi
   # A non-numeric clock must produce UNEVALUATED, not a bash arithmetic crash.
   mkdir -p "$W/baddate"; printf '#!/bin/sh\necho 19700101T000000Z\n' > "$W/baddate/date"; chmod +x "$W/baddate/date"
   brc=0; timeout 120 env PATH="$W/nolog:$W/baddate:/usr/bin:/bin" RECIPIENT_FILE="$REC" DEST="$GD" \
@@ -375,7 +381,10 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
     else fail=$((fail+1)); printf '  FAIL  %-46s %s\n' "$label" "$verdict"; sed -n '1,3p' "$W/rho" | sed 's/^/          /'; fi
     return 0
   }
-  RK="$W/rh"; KB="$RK/keydir"; DB="$RK/dest"; HB="$RK/home"
+  RK="$W/rh"; KB="$RK/keydir"; DB="$RK/dest"; HB="$RK/jol-control"
+  # The sandbox REPO is deliberately named `jol-control`: the rehearsal derives the snapshot pattern
+  # from the repository's basename, so naming it `home` made it hunt for `home-terraform.tfstate.*.age`
+  # and every later case fell over. That coupling is the point of the pinning, and it is tested here.
   mkdir -p "$KB" "$DB" "$HB"; chmod 700 "$RK" "$KB"
   age-keygen -o "$KB/state-backup-key.txt"     >/dev/null 2>&1
   age-keygen -o "$KB/state-recovery-test.txt"  >/dev/null 2>&1
@@ -431,6 +440,64 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
   fi
 else
   skip=$((skip+13)); echo "  SKIP   rehearsal scripts or age absent - 13 cases not evaluated"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 46-50: whose snapshot is this? Found live on 2026-10-27: another tree (jolarca-control) started
+# writing `terraform.tfstate.s17.*.age` into the SAME destination this guard reads, and the guard's
+# `newest *.age` glob let its file satisfy ours - `RC=0 nothing to do` while the jol-control inventory
+# was hours stale. Three separate holes were in that one line: no name pinning, no future-mtime rule
+# (a 2099 mtime logged "-632713h old (< 24h)" and passed), and no proof the snapshot protects THIS
+# state. Needs jq, the guard, and a real terraform.tfstate to read a lineage from, so it SKIPs on a
+# runner that has no state - never a silent pass.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ -f "$GUARD" ] && [ -s "$REPO/terraform.tfstate" ]; then
+  LIVE_LIN_TEST=$(jq -r '.lineage // empty' "$REPO/terraform.tfstate" 2>/dev/null || true)
+  SD="$W/sep"; mkdir -p "$SD"
+  printf 'age1testonlytest\n' > "$SD/rec"
+  gsay(){ sed -n 's/.*state-backup-guard\[[0-9]*\]: //p' "$W/gs"; }
+  rung(){ local want=$1 label=$2 says=$3 nosay=$4; shift 4
+    local rc=0; timeout 180 env REPO="$REPO" RECIPIENT_FILE="$SD/rec" "$@" \
+      bash "$GUARD" </dev/null >"$W/gs" 2>&1 || rc=$?
+    local v=ok
+    [ "$rc" = "$want" ] || v="RC=$rc want=$want"
+    if [ -n "$says" ] && ! grep -qF -- "$says" "$W/gs"; then v="$v; missing text"; fi
+    if [ -n "$nosay" ] && grep -qF -- "$nosay" "$W/gs"; then v="$v; said the FORBIDDEN thing: $nosay"; fi
+    if [ "$v" = ok ]; then pass=$((pass+1)); printf '  ok    %-46s RC=%s\n' "$label" "$rc"
+    else fail=$((fail+1)); printf '  FAIL  %-46s %s\n' "$label" "$v"; gsay | sed -n '1,3p' | sed 's/^/          /'; fi
+  }
+  # 46 a foreign snapshot, newer than anything of ours, must not be treated as our backup
+  rm -rf "$SD/d"; mkdir -p "$SD/d"
+  : > "$SD/d/terraform.tfstate.s17.29990101T000000Z.age"; touch -d '2099-01-01' "$SD/d/terraform.tfstate.s17.29990101T000000Z.age"
+  # expect 1, not 2: with no snapshot of ours the guard correctly tries to make one, and backup_state.sh
+  # then refuses this sandbox destination because it sits on the state's own disk. The property under
+  # test is "the foreign file did not silence us", which the forbidden `nothing to do` phrase pins.
+  rung 1 "46 foreign snapshot cannot satisfy us" "no snapshot present" "nothing to do" \
+    DEST="$SD/d" MAX_AGE_H=999999
+  # 47 a FUTURE mtime on our own name is a broken clock or a planted file, not freshness
+  : > "$SD/d/jol-control-terraform.tfstate.29990101T000000Z.age"
+  touch -d '2099-01-01' "$SD/d/jol-control-terraform.tfstate.29990101T000000Z.age"
+  rung 2 "47 future mtime -> UNEVALUATED"        "future mtime"                 "nothing to do" \
+    DEST="$SD/d" MAX_AGE_H=999999
+  # 48 right name, fresh, but protecting a DIFFERENT inventory -> must not read as healthy
+  rm -f "$SD/d"/*.age "$SD/d"/*.info
+  : > "$SD/d/jol-control-terraform.tfstate.20260101T000000Z.age"
+  printf 'lineage   : 00000000-diff-erent-inventory-000000\nmd5  : x
+' > "$SD/d/jol-control-terraform.tfstate.20260101T000000Z.age.info"
+  rung 1 "48 foreign lineage forces past freshness" "DIFFERENT inventory" "nothing to do" \
+    DEST="$SD/d" MAX_AGE_H=999999
+  # 49 an unidentified snapshot is UNEVALUATED, never a pass
+  rm -f "$SD/d"/*.info; printf 'md5  : x\n' > "$SD/d/jol-control-terraform.tfstate.20260101T000000Z.age.info"
+  rung 2 "49 snapshot with no lineage is UNVERIFIED" "no lineage recorded"  "nothing to do" \
+    DEST="$SD/d" MAX_AGE_H=999999
+  # 50 and the identity case the guard was missing: correct lineage IS accepted as fresh
+  rm -f "$SD/d"/*.info
+  printf 'lineage   : %s\nmd5  : x\n' "$LIVE_LIN_TEST" > "$SD/d/jol-control-terraform.tfstate.20260101T000000Z.age.info"
+  rung 0 "50 our own lineage + fresh = nothing to do" "nothing to do" "DIFFERENT inventory" \
+    DEST="$SD/d" MAX_AGE_H=999999
+  rm -rf "$SD"
+else
+  skip=$((skip+5)); echo "  SKIP   guard or a real terraform.tfstate absent - 5 identity cases not evaluated"
 fi
 
 echo "---"

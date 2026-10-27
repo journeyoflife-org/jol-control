@@ -39,6 +39,7 @@ documents cite them. In numeric order:
 | S2-015 | A RB-09 cron-editing instruction from this repository corrupted jol's crontab; caught in-session and restored | closed; instruction replaced and verified |
 | S2-016 | The estate's alerting chain is non-functional end to end, so no scheduled failure can notify anyone | open; `make backup-status` is the interim pull |
 | S2-017 | The custody rehearsal shipped in `c4eb8b6` was defective four times over, and the gate beside it could never report success | closed by replacement; 13 cases added |
+| S2-018 | A second project began writing its own snapshots into this backup's destination and satisfied the freshness gate with them | closed; name, clock and lineage all now checked, 5 cases added |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1985,6 +1986,57 @@ not satisfied by an attestation of another *machine*.
 **Files affected:** `scripts/offhost_rehearsal.sh`, `scripts/backup_status.sh`,
 `tests/test_backup_gate.sh` (32 → 45), `tests/test_retire_gate.sh`, `Makefile`, `AGENTS.md` §3,
 `docs/runbooks.md` RB-09.
+
+### S2-018: another project's backup passed this project's freshness gate
+
+**Discovered:** 2026-10-27 22:42, incidentally — while re-reading the crontab to confirm a line count  
+**Status:** CLOSED in code (guard, status pull and rehearsal all pin the snapshot identity now); the host
+cleanup is **open** and belongs to the operator.  
+**Severity:** S1-shaped behaviour in an S2 component: a backup control that reports itself satisfied by
+someone else's artefact is worse than no control, because it stops the refresh that would have saved us.
+
+**What happened.** A thirteenth line appeared in jol's crontab, added outside this session by the
+`jolarca` tree: `17 4 * * * cd /opt/jolarca/repos/jolarca-control && BACKUP_DEST=/mnt/jol-backup/jol-state-backup …`.
+That destination is the one RB-08/RB-09 chose for `terraform.tfstate`. Its output landed beside mine:
+three `terraform.tfstate.s17.*.age` files (100,670 bytes each), newest written 22:42 — minutes before
+this was noticed.
+
+**Why that broke my control.** Every consumer selected the snapshot by recency over a wildcard:
+`find "$DEST" -maxdepth 1 -type f -name '*.age' … | sort -rn | head -1`. Nothing asked *whose* state the
+file protects. Observed directly, with a foreign file planted as the newest:
+
+| Symptom | Measured |
+|---|---|
+| the guard reported itself satisfied | `OK: newest snapshot is 0h old (< 24h) - nothing to do`, exit **0**, while jol-control's own newest snapshot was hours old |
+| the status pull mislabelled the inventory | `newest snapshot  terraform.tfstate.s17.20261027T204235Z.age` — a foreign state, presented as ours |
+| a future timestamp read as fresh | `newest snapshot is -632713h old (< 24h) - nothing to do`, exit **0**. A negative age is below every threshold, so a broken clock or a planted file passes |
+| identity never checked | the sidecar records `lineage   : 25425c0f-…`, which is exactly the field that distinguishes our inventory from theirs, and nothing read it |
+
+**Fixes, each with a case that proves it is load-bearing.** `state_backup_guard.sh`, `backup_status.sh`
+and `offhost_rehearsal.sh pack` now glob `$(basename "$REPO")-terraform.tfstate.*.age` — the name
+`backup_state.sh` writes and the RB-08 restore half globs — and announce how many foreign `*.age` files
+they ignored. A future mtime is UNEVALUATED (exit 2), never fresh. The sidecar's lineage is compared with
+the live state's: a **mismatch** forces a refresh instead of accepting the age, and a snapshot with **no
+recorded lineage** is refused as unidentified rather than passed. Cases 46–50, then mutation-tested: name
+pinning removed, future-mtime refusal removed, the mismatch force removed, and the unidentified refusal
+removed — each caught by its named case, and the third one fails precisely with `said the FORBIDDEN
+thing: nothing to do`. The guard file was restored byte-identically after every mutation (`md5sum`
+compared each time).
+
+**One bug found in the fix, not in the original.** The first version of the lineage block printed
+"DIFFERENT inventory … refreshing anyway" and then fell into the freshness shortcut and **exit 0** —
+the prose contradicted the verdict. It is the same shape as measurement trap 15: a check that reports the
+right words and enforces nothing reads correct in a log review. `MISMATCH` now gates the shortcut, and
+case 48 asserts the forbidden phrase, not just the exit code.
+
+**Residual, operator's call.** Two projects writing one directory is fragile even with name pinning: a
+`rm -rf` aimed at one can hit the other, and nothing separates their retention. Either give each tree its
+own subdirectory on that disk (`/mnt/jol-backup/jol-control/` vs `/mnt/jol-backup/jolarca/`) or move the
+jolarca job elsewhere. This repository will not edit another organization's crontab line — that is
+jolarca's control plane, not this one's.
+
+**Files affected:** `scripts/state_backup_guard.sh`, `scripts/backup_status.sh`,
+`scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (45 → 50), `docs/runbooks.md` RB-08/RB-09.
 
 ---
 

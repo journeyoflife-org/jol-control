@@ -96,18 +96,19 @@ jobs:
         run: python3 tests/test_agents_gate.py
 
       - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
-        # 45 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
-        # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Measured census for
-        # this runner, taken in a mirror tree with the crypto block forced off: **24 pass, 21 skip, exit 0**.
-        # The 21 need age AND a real terraform.tfstate, which this runner cannot have (state is gitignored),
-        # so they report SKIPPED and are announced — a skipped case is never counted as a pass. Case 19 also
-        # requires docs/runbooks.md's fence to be byte-identical to the script, so the runbook cannot drift
-        # from the code it documents.
+        # 50 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
+        # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Expected here:
+        # about **24 pass, 26 skip** — the crypto/rehearsal block needs age and a real terraform.tfstate,
+        # and the identity block (46-50) needs a state to read a lineage from. Those figures are computed
+        # from the suite's own skip accounting, not observed on a runner yet; if the merge run disagrees,
+        # correct this comment rather than trusting it. A skipped case is announced, never a pass.
         # What the suite pins: an earlier revision wrote plaintext state at the ambient umask and left it on
         # disk on every failure path, a refused same-second re-run deleted the original backup, the sidecar
         # claimed "off-host-verified" for a key whose location was never checked, and the custody packet
         # carried an ABSOLUTE-path manifest that verified the files left at home rather than the copies
         # (cases 33-45, finding S2-017). Case 39 therefore relocates the packet and DELETES the source.
+        # Cases 46-50 pin WHOSE snapshot it is: a second tree (jolarca) now writes into the same
+        # destination, and `newest *.age` let its file satisfy this gate (finding S2-018).
         # COVERAGE CAVEAT, stated because it was once written wrong: this workflow triggers on
         # push:branches:[main] only, so a pull request shows NO signal from this step. First real
         # execution is the merge commit. Keep the case count here in step with the suite — it has

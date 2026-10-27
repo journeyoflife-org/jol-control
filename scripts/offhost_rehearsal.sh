@@ -39,8 +39,11 @@ pack)
   [ -r "$RECIPIENT_FILE" ] || die "no $RECIPIENT_FILE - record the recipient first (RB-09 step 3)"
   RECIPIENT="$(sed -n '1p' "$RECIPIENT_FILE" | tr -d ' \t')"
   case "$RECIPIENT" in age1*) : ;; *) die "$RECIPIENT_FILE does not hold an age1... recipient" ;; esac
-  SNAP="$(find "$DEST" -maxdepth 1 -type f -name '*.age' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
-  if [ -z "$SNAP" ] || [ ! -s "$SNAP" ]; then die "no snapshot in $DEST - is the off-device volume mounted? (findmnt -T $DEST)"; fi
+  # Pinned to this repository's snapshot name. On a destination shared with another tree (as this host's
+  # now is), `*.age` would happily pack the other project's state and call the rehearsal a success.
+  SNAP_GLOB="$(basename "$REPO")-terraform.tfstate.*.age"
+  SNAP="$(find "$DEST" -maxdepth 1 -type f -name "$SNAP_GLOB" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+  if [ -z "$SNAP" ] || [ ! -s "$SNAP" ]; then die "no snapshot matching $SNAP_GLOB in $DEST - is the off-device volume mounted? (findmnt -T $DEST)"; fi
   [ -s "$SNAP.info" ] || die "snapshot has no .info sidecar; cannot compare an expected md5"
   IDENTITY="${IDENTITY:-$(find "$KEYDIR" -maxdepth 1 -type f -name 'state-recovery-*' | head -1)}"
   if [ -z "$IDENTITY" ] || [ ! -s "$IDENTITY" ]; then die "no recovery identity found under $KEYDIR; set IDENTITY=<file>"; fi

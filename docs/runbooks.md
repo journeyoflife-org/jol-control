@@ -717,7 +717,7 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 45 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 50 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
@@ -727,7 +727,13 @@ need neither `age` nor a real state and therefore run in CI (measured in a mirro
 block forced off: **24 passed, 21 skipped, exit 0**); the 21 skipped cases additionally need `age` **and**
 a real `terraform.tfstate`, which a runner cannot have (state is gitignored), so they report `SKIPPED`
 and are announced rather than counted as passes.
-Locally: **45 passed, 0 failed, 0 skipped** (cases 33–45 cover the custody rehearsal below).
+Locally: **50 passed, 0 failed, 0 skipped** (cases 33–45 are the custody rehearsal, 46–50 the snapshot
+identity rules).
+
+> **CI census caveat, stated rather than computed:** the figures above were measured by forcing the
+> optional blocks off in a copy. On a real runner the two identity cases (46–50) also skip for want of a
+> `terraform.tfstate`, so expect roughly **24 passed / 26 skipped**. The merge commit is the first
+> observation; correct this line if it disagrees, as it has been corrected twice before.
 
 The suite was falsified rather than trusted. Nine defects that were fixed were each reintroduced into
 a **throwaway copy** — never the working tree — and every one is caught by a named behavioural case:
@@ -1010,6 +1016,17 @@ Prometheus scraping only itself), so a run of `1`s would be invisible until some
 backup-status` is the interim: one pull, 0/1/2, that re-derives the disk separation instead of
 trusting the sidecar and refuses to report anything it cannot see as a pass.
 
+**The destination is shared — check whose snapshot you are looking at.** Since 2026-10-27 the jolarca
+tree also writes its state backups into `/mnt/jol-backup/jol-state-backup` (`terraform.tfstate.s17.*.age`,
+via its own cron line). Selecting "newest `*.age`" therefore let **another project's** backup satisfy this
+repository's freshness gate: the guard logged `nothing to do` and exited 0 while our own snapshot was
+hours old (finding **S2-018**). Three rules now hold in every consumer here — the snapshot name is pinned
+to `<repo>-terraform.tfstate.*.age`, a **future** mtime is UNEVALUATED rather than fresh, and the
+sidecar's `lineage` must equal the live state's or the snapshot is not treated as ours. When you restore,
+read that lineage field **before** you overwrite anything; a correctly named file from a different
+inventory restores a different organization. Separating the two directories (one per tree) is the durable
+fix and is the operator's call, not a script's.
+
 ### The off-machine rehearsal, as a challenge round-trip
 
 Step 5 is the one action that closes S2-014. The first version of this section told the operator to copy
@@ -1052,9 +1069,9 @@ to live:
 find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
 
-**Committed harness — 45 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+**Committed harness — 50 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
 refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
-Locally: **45 passed, 0 failed, 0 skipped**.
+Locally: **50 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018).
 
 **Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;
 `terraform.tfstate` is opened for reading by the backup script, never here. Removing
