@@ -54,7 +54,10 @@ plan-gate: state-gate ## STOP gate — halt if the plan destroys or replaces any
 	python3 scripts/plan_gate.py tfplan.json
 
 apply: plan-gate ## Apply the saved plan (blocked when either gate halts)
-	@echo "WARNING: this host holds the only copy of terraform.tfstate."
+	@echo "WARNING: terraform.tfstate has no OFF-HOST copy."
+	@echo "         Encrypted ON-HOST backups do exist (/opt/jol/backup/tfstate/*.age) but they"
+	@echo "         are manual, and share this device — a disk failure loses both. Restore and"
+	@echo "         verify them with docs/runbooks.md RB-08 before applying anything."
 	@echo "         CI cannot apply — it has no access to this state."
 	@echo "         state-gate: the state file accounts for what this config declares."
 	@echo "         plan-gate: the plan contains no destroy/replace actions."

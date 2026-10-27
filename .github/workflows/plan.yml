@@ -68,9 +68,31 @@ jobs:
         run: python3 tests/test_plan_gate.py
 
       - name: Destroy / Replace Gate (STOP on destructive plan)
+        # This gate cannot be EVALUATED in CI, and running it unconditionally made the check
+        # permanently red: `terraform.tfstate` is gitignored (§4 read-only inventory), so
+        # `terraform init` starts from an EMPTY state and every plan here is
+        # "119 to add, 0 to destroy, 0 to replace". A create-only plan carries no
+        # destroy/replace signal, so the step detected nothing while failing every PR that
+        # touches *.tf, repos/**, policy/** or *.tfvars — noise that trains an operator to
+        # merge through a red control (same class as S1-010; see S1-012).
+        # This is NOT a weakening: the gate still runs unconditionally where the inventory
+        # actually is — `make plan-gate` on the control-plane host, which `make apply` depends
+        # on — and its logic is proven on every PR by the self-test above, whose fixtures
+        # include the empty-state shape. The condition below is armed on POSITIVE evidence of
+        # a readable inventory (a local state file, or a declared backend once S2-003 lands),
+        # so the gate re-arms itself automatically after a remote-state migration. Verified:
+        # host-with-state -> arms; CI-checkout -> skips; backend-declared -> arms.
+        # `--allow-empty-state` is deliberately NOT used: it is the audited bootstrap-only
+        # exception, and reaching for it here would be exactly the workaround AGENTS.md §5.2
+        # forbids.
         run: |
-          terraform show -json tfplan > tfplan.json
-          python3 scripts/plan_gate.py tfplan.json
+          if [ -s terraform.tfstate ] || grep -qE '^[[:space:]]*backend[[:space:]]+"' *.tf 2>/dev/null; then
+            terraform show -json tfplan > tfplan.json
+            python3 scripts/plan_gate.py tfplan.json
+          else
+            echo "::notice title=Plan gate UNEVALUATED in CI::No inventory reachable from this checkout (terraform.tfstate is gitignored and no backend is declared), so the plan is create-only and carries no destroy/replace signal. Absence of a finding here is not a pass. The STOP gate runs on the control-plane host via 'make plan-gate', which 'make apply' depends on; its logic is proven by the Plan Gate Self-Test above."
+            echo "Plan gate: **UNEVALUATED in CI** (no reachable inventory) — not a pass. See docs/drift-findings.md S1-012." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Policy Check (Conftest)
         run: |
