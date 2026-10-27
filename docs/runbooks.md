@@ -609,6 +609,12 @@ different block device.
    identity, and the two separation refusals below. Two mutations — a vacuous proof comparison, and
    removing the proof check — each make the suite fail.
 
+   > **Do not run this ceremony to feel safe about a copy that is merely on another disk in the same
+   > box.** See S2-014: with the only other copy sitting on `sdb` next to the ciphertext, retiring the
+   > local half proves disk separation, buys no redundancy (`AGE-1` opens every snapshot anyway, two
+   > recipients being 1-of-2), and worsens the theft posture. Run it after a copy is genuinely
+   > off-machine, or not at all.
+
 **A first version of that gate had a hole worth naming, because it is the same hole as S2-013.** It
 proved *"a private key recovered the nonce"* while that private key was still sitting on this host and
 no second copy existed — so the ceremony could complete, the local file be shredded, and the key be

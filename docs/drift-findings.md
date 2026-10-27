@@ -35,7 +35,7 @@ documents cite them. In numeric order:
 | S2-011 | This register's index omitted S1-009 | fixed |
 | S2-012 | An agent destroyed the live state file; recovery depended on an undocumented backup | recovered; automation still absent |
 | S2-013 | A recovery identity was shredded before any off-host copy existed, on instructions written by this project's own runbook | open; gate built, key must be re-minted |
-| S2-014 | Both private keys sit on the device the off-device backups were made to survive, so those backups are unreadable exactly when they are needed | open; needs an off-machine key copy |
+| S2-014 | Both private keys sat on the device the off-device backups were made to survive; an interim key copy on `sdb` fixes that and leaves every disk holding a key beside its ciphertext | open; needs an off-machine key copy |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1784,12 +1784,35 @@ every signal this repository emits today says the opposite.
 | `…T183202Z.age`, `…T193132Z.age` (the off-device snapshots) | `sdb` |
 | three older snapshots under `/opt/jol/backup/tfstate/` | `nvme0n1` |
 
-No key exists on `sdb`, and none exists off the machine.
+**No key existed on `sdb`, and none existed off the machine.**
 
-**Consequence.** If `nvme0n1` fails, the live state and **both private keys** are lost together. The
-ciphertext on `sdb` survives and is worthless: `age` without any recipient's secret half cannot be
-recovered by anything. The device failure the off-device copy was built to survive is precisely the
-failure that destroys the ability to read it.
+**Update, same day — the interim mitigation applied, and it moves the risk rather than removing it.** A
+copy of the recovery identity was placed on `sdb` (`sha256 ad7d3c2c…`, matching the local file, and
+confirmed to decrypt `…T193132Z.age` to the expected md5). The NVMe-death scenario is therefore now
+covered. What it costs is stated by counting what sits on each device:
+
+| Device | snapshots | private keys |
+|---|---|---|
+| `sdb` | 2 | **1** |
+| `nvme0n1` | 3 (older set) | **2** |
+
+**Each device now holds a key together with data that key opens.** Physical theft of either disk yields
+the infrastructure inventory of 40 repositories, including whatever credentials the state records. The
+`keys/` directory also arrived as mode `775` (group/other may list it) where the file inside is `600`, so
+the tight form is `chmod 700` on the directory.
+
+The retirement ceremony must therefore **not** be run to "close" this. Its prompt says *the machine that
+holds the OTHER COPY*, while the only other copy is on `sdb` in the same chassis: completing it proves a
+copy on another **disk** can decrypt — which is exactly what the gate claims and nothing more — and it
+would leave the surviving key sitting beside the ciphertext. `AGE-1` opens every snapshot regardless, two
+recipients being 1-of-2, so retiring the local half buys no redundancy and worsens the theft posture.
+
+**Consequence, as first measured.** If `nvme0n1` failed, the live state and **both private keys** were
+lost together. The ciphertext on `sdb` survived and was worthless: `age` without any recipient's secret
+half cannot be recovered by anything. The device failure the off-device copy was built to survive was
+precisely the failure that destroyed the ability to read it. The interim copy above closes that specific
+scenario; **whole-host loss (fire, theft, ransomware, a power event taking both disks) still takes the
+state, both keys and every snapshot that is not off-machine, which is the remainder of this finding.**
 
 **Why every existing signal missed it.** `backup_state.sh` reports
 `device-check : verified-different: state=nvme0n1 backup=sdb`, which is **true and irrelevant** — it
