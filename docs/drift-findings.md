@@ -35,6 +35,7 @@ documents cite them. In numeric order:
 | S2-011 | This register's index omitted S1-009 | fixed |
 | S2-012 | An agent destroyed the live state file; recovery depended on an undocumented backup | recovered; automation still absent |
 | S2-013 | A recovery identity was shredded before any off-host copy existed, on instructions written by this project's own runbook | open; gate built, key must be re-minted |
+| S2-014 | Both private keys sit on the device the off-device backups were made to survive, so those backups are unreadable exactly when they are needed | open; needs an off-machine key copy |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1764,6 +1765,54 @@ Two secondary lessons from the same fix: the test stub was written with a **quot
 `$W` inside it never expanded and was unset at run time — the identical class as trap 14's silent
 no-op, arriving from the opposite direction; and a sentence left dangling mid-edit was caught only by
 re-reading the published file.
+
+### S2-014: the off-device snapshots are undecryptable in the scenario they exist for
+
+**Discovered:** 2026-10-27  
+**Status:** OPEN. This is a design gap in the control built for S2-012/S2-013, not a regression: the
+mechanism works exactly as specified, and the specification omits the thing that matters.  
+**Severity:** S1 — the inventory of 40 repositories would be unrecoverable in the target scenario, and
+every signal this repository emits today says the opposite.
+
+**Measured placement, resolved with `findmnt --target` then `lsblk -no PKNAME`:**
+
+| Object | Device |
+|---|---|
+| live `terraform.tfstate` | `nvme0n1` |
+| `~/.config/age/state-backup-key.txt` (AGE-1, the only key that opens **every** snapshot) | `nvme0n1` |
+| `~/.config/age/state-recovery-20261027-b.txt` (AGE-3 recipient of the newest snapshot) | `nvme0n1` |
+| `…T183202Z.age`, `…T193132Z.age` (the off-device snapshots) | `sdb` |
+| three older snapshots under `/opt/jol/backup/tfstate/` | `nvme0n1` |
+
+No key exists on `sdb`, and none exists off the machine.
+
+**Consequence.** If `nvme0n1` fails, the live state and **both private keys** are lost together. The
+ciphertext on `sdb` survives and is worthless: `age` without any recipient's secret half cannot be
+recovered by anything. The device failure the off-device copy was built to survive is precisely the
+failure that destroys the ability to read it.
+
+**Why every existing signal missed it.** `backup_state.sh` reports
+`device-check : verified-different: state=nvme0n1 backup=sdb`, which is **true and irrelevant** — it
+compares the plaintext to its copy. The sidecar states `recovery-key-location : NOT CHECKED`, which is
+honest but silent about the case that matters, and no check anywhere relates the keys' location to the
+ciphertext's. An earlier revision of this runbook claimed `off-host-verified: yes` on the strength of a
+decrypt (S2-012 follow-up 12); the correction removed a false claim without adding the missing one.
+**A check that measures the right-looking pair is more dangerous than no check, because it closes the
+question.**
+
+**Fix, in the order that helps.** (1) Put the recovery identity somewhere that is not this machine at
+all — another host, a password manager, printed entropy. That is the only arrangement where losing
+either disk leaves something readable, and `make retire-key` now refuses to delete the local half until
+a copy on a **different disk** proves it can decrypt (S2-013's fix), so the ceremony is safe to run.
+(2) A copy on `sdb` alongside the ciphertext does close the NVMe-failure scenario alone, at the cost
+that a simultaneous `sdb` failure takes both halves of the pair together; acceptable as an interim, not
+as the end state. (3) The right durable control is a check that reports the **key-to-ciphertext**
+relation, not just state-to-ciphertext; it cannot be computed locally, because a copy that is
+provably elsewhere is by definition not visible here — which is why step 1 is a human act and this
+finding cannot be closed by a script.
+
+**Files affected:** none yet; recorded so the next reader does not mistake `device-check:
+verified-different` for a complete separation claim.
 
 ---
 

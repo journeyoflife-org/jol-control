@@ -661,6 +661,13 @@ and that each supplied identity reproduces the source md5. It does **not** and c
   `lsblk -no PKNAME`, refusing when both resolve to one disk), but only when those tools can resolve
   the paths. When they cannot, the run **warns** and the sidecar records `device-check: unevaluated`;
   read the sidecar, do not infer off-device protection from a successful exit;
+- **and this is the important one:** that the **private keys** are anywhere other than the state's own
+  disk. `device-check` compares the live state to the ciphertext. It says nothing about the keys, and a
+  backup whose every key sits on the device it is meant to survive is unreadable exactly when it is
+  needed — which is the present state of this host (**S2-014**, both keys on `nvme0n1`, ciphertext on
+  `sdb`). A copy that is genuinely off-machine is invisible to any check run here, so this gap can only
+  be closed by a human carrying a key elsewhere, and proved by restoring from it (**step 5 of RB-09**).
+  Do not read a green `device-check` as "the custody split exists".
 - that the backup is **recent**, and nothing runs it on a schedule;
 - **disk-full or partial-write** failures beyond what the decrypt catches: the ciphertext is read back
   by `verify`, so a truncated file fails, but a `SIGKILL` between reserving `$OUT` and finishing the

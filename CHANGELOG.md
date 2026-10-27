@@ -294,6 +294,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-014 — the off-device backups are undecryptable in the scenario they were created for.** Measured
+  with `findmnt --target` then `lsblk -no PKNAME`: the live state and **both** age private keys are on
+  `nvme0n1`; the two `age`-encrypted snapshots are on `sdb`; no key exists on `sdb` or off the machine.
+  So an `nvme0n1` failure destroys the state and every key together, leaving ciphertext on `sdb` that
+  nothing can open — the exact device the copy exists to survive. Nothing in the repository contradicts
+  this: `backup_state.sh` prints `device-check : verified-different: state=nvme0n1 backup=sdb`, which is
+  true and beside the point, because it compares the plaintext to its copy and never the keys to the
+  ciphertext. Recorded as an open finding with the placement table, and RB-08's Limitations name it
+  explicitly — a check that measures the right-looking pair is more dangerous than no check, because it
+  closes the question. Not fixable by a script: a copy that is provably elsewhere is by definition not
+  visible here
 - **The retirement gate built for S2-013 had S2-013's own hole.** It proved only that *a* private key
   recovered the challenge nonce — while the local copy of that key was still present and no second copy
   existed. The operator's `cp` of the freshly minted identity to the second disk then failed with
