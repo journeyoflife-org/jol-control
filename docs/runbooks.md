@@ -725,7 +725,7 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 58 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 62 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
@@ -735,7 +735,7 @@ need neither `age` nor a real state and therefore run in CI (re-measured after t
 22 skipped, exit 0**); the 22 skipped cases additionally need `age` **and** a real `terraform.tfstate`,
 which a runner cannot have (state is gitignored), so they report `SKIPPED` and are announced rather than
 counted as passes.
-Locally: **58 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
+Locally: **62 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
 rules, 51 the default destination, 52 the challenge-token secrecy).
 
 > **CI census, measured 2026-10-27 in a runner-shaped run** (the `age` probe forced off and
@@ -1084,6 +1084,25 @@ make backup-attest        # prompts, input hidden
 make backup-status        # 0 only while the attestation is fresh (< 30 days)
 ```
 
+**Place the key first — split delivery (S2-023).** By default `pack` deliberately leaves the identity out of
+the packet, so the directory you carry is ciphertext only: losing it reveals nothing. The other machine
+must already hold the key copy, placed once by hand — a password-manager entry, a printed sheet in a
+fireproof box, an encrypted volume, or a copy you carried there separately. If it does not, do the one-time
+placement with the key inside:
+
+```bash
+make backup-pack WITH_KEY=1     # first placement only; treat that packet as secret material end to end
+```
+
+Then carry it, decrypt once, and from then on re-pack normally without the key. **Why this ordering:** the
+previous version of this step put the key and the snapshot in one folder, so a single lost stick produced
+both halves — strictly worse than the S2-014 condition it was meant to cure, where at least two devices had
+to fail together. And `age` ciphertext is safe over any channel (it carries no plaintext and nothing capable
+of opening it), while the key must never cross email, chat or a cloud drive: that asymmetry is the whole
+reason for splitting the delivery. `verify` also refuses to run on this host (S2-023) — it would find the
+local key, print a token, and turn a restore rehearsal into fake custody evidence; to rehearse the restore
+locally on purpose, run it with `LOCAL_OK=1`, which proves the restore and withholds the token.
+
 There is deliberately nothing to substitute in those lines. Five instructions in this project during one
 day broke because an angle-bracket stand-in was typed into a shell literally — `PROOF=<that-nonce>`
 (syntax error), `CHALLENGE_DIR=/tmp` (wrong disk, in the step about disks), a `backup.sh` that had never
@@ -1115,9 +1134,9 @@ to live:
 find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
 
-**Committed harness — 58 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+**Committed harness — 62 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
 refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
-Locally: **58 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
+Locally: **62 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
 pins the default destination; 52 proves `pack` never prints the challenge token, finding S2-019).
 
 **Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;

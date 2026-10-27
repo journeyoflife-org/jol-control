@@ -96,7 +96,7 @@ jobs:
         run: python3 tests/test_agents_gate.py
 
       - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
-        # 58 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
+        # 62 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
         # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Measured in a
         # runner-shaped run (age probe off, state absent): **30 pass, 22 skip, exit 0**. Reaching that
         # took a fix: cases 3, 4, 21 and 23 defaulted SRC to $REPO/terraform.tfstate, which no runner has

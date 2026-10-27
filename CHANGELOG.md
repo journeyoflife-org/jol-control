@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 58 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 62 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -342,6 +342,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-023 — the remedy for a single-carrier failure was itself a single carrier.** Asked plainly whether
+  this was being done correctly, two things came back wrong. (1) `pack` put the private identity and the
+  snapshot it opens in **one directory** and told the operator to carry that directory — one lost stick or
+  one intercepted transfer yields both halves at once, strictly worse than the S2-014 layout it replaced,
+  which at least needed two devices to fail together. Split delivery is now the default: the key is left
+  out, `verify` finds a separately placed copy under `PLACED_SEARCH`, and it never falls back to age's
+  ambient identity resolution, because a key that merely happens to be on the receiving machine would
+  satisfy a proof meant to show a *separately custodied* copy. `WITH_KEY=1` restores the old behaviour for
+  the one-time placement, announcing it. (2) `verify` would run **on the source host** — the key is here,
+  so it decrypts, prints a token, and the operator could attest without anything leaving the machine: a
+  restore rehearsal laundered as custody evidence. The runbook warned against it in prose, which is the
+  control class this register keeps proving ineffective. `verify` now detects the source host by the record
+  that only exists there and refuses; `LOCAL_OK=1` allows a deliberate local restore rehearsal that proves
+  the restore half and **withholds the token**, so it cannot be attested. Cases 59–62 (suite 58 → 62);
+  case 61 asserts absence of the known token, not merely presence of a warning
+- **Three documents called the Terraform state a "credential inventory"; measured, it holds none.**
+  `jq` enumerates `github_repository`, `github_branch_protection` and
+  `github_repository_vulnerability_alerts` only, and a grep for `ghp_`/`gho_`/`AGE-SECRET-KEY`/
+  `BEGIN PRIVATE KEY`/`AKIA` returns **0** hits; the sole secret-shaped attribute name is the boolean
+  `private`. The correct statement of the exposure is the map of the estate — which repositories exist,
+  which are private, which protections and vulnerability alerts are enabled — not a vault of credentials.
+  Wording corrected in `docs/drift-findings.md` (two places) and `CHANGELOG.md`; overstating what a
+  breach yields is as much an audit defect as understating it
 - **S2-022 — a custody challenge had no lifetime, and re-packing silently orphaned the one in flight.**
   Found while answering a smaller question ("is Ctrl-C safe here?") and testing that answer rather than
   assuming it: `attest` compared the token hash and never read `issued=`, so a nonce recovered eleven
@@ -382,7 +405,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit input of `state_backup_guard.sh` too, forwarded to the backup script, and the lineage
   cross-check reads the *same* file it protects; the guard cases supply the synthetic populated state that
   already existed for case 9, and the identity cases (46-50) now execute in CI rather than skipping there.
-  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **58 passed, 0
+  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **62 passed, 0
   failed**. No behaviour change on this host — the default is still `$REPO/terraform.tfstate`
 - **S2-019 — the custody challenge printed its own answer.** `offhost_rehearsal.sh pack` ended by echoing
   the nonce it had just encrypted to the off-device recipient ("for comparison only"). That nonce *is* the
@@ -395,7 +418,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reverting the fix in place makes the suite report `51 passed, 1 failed` naming the leak. **The harness
   was the second bug**: a first mutation run looked "undetected" because it printed an exit code without
   the census, and cases 51/52 had no `else` — a skipped case was indistinguishable from a passed one.
-  Both now announce a skip (suite 50 → 58 cases)
+  Both now announce a skip (suite 50 → 62 cases)
 - **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
   outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
   `/mnt/jol-backup/jol-state-backup` — the destination RB-08/RB-09 used until this change moved ours to
@@ -574,7 +597,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$OUT.decoded` at the ambient umask (`0002` on this host → mode `664`, other-readable) and left it
   behind on every failure path, because `rm -f "$DEC"` sat after a call that can fail under `set -e`
   and because `trap … RETURN` does not fire when a function calls `exit` or when `set -e` aborts
-  mid-function. That is the credential inventory of 40 repositories in plaintext next to the ciphertext,
+  mid-function. That is the full configuration of 40 repositories in plaintext next to the ciphertext,
   produced by a script this changelog had just called "fail-closed". Fixed with `umask 077`, a single
   `EXIT` trap over every temp, and removal of the artefact unless the run fully succeeded. (2)
   `state_gate.py` was invoked without pinning its config directory, so from a foreign CWD it judged a

@@ -80,10 +80,24 @@ pack)
     echo "      any packet already away from this machine can no longer be attested. If one is"
     echo "      in transit, finish it (verify + attest) before trusting this new packet."
   fi
+  # Split delivery by default. A packet carrying the identity AND the ciphertext it opens means one
+  # lost stick, one intercepted email, one laptop surrendered for repair yields the key and the data in
+  # one act - the exact single-carrier failure S2-014 was about, reproduced in the remedy for it. So the
+  # key is expected to already be on the far machine (placed once, by hand: password manager, printed,
+  # an encrypted volume) or to travel separately. WITH_KEY=1 puts it back in, for the first placement.
+  WITH_KEY="${WITH_KEY:-0}"
+  if [ "$WITH_KEY" = 1 ]; then
+    echo "WITH_KEY=1: the private identity is being carried INSIDE the packet. Use this only to place the"
+    echo "            first copy, and treat that packet as secret material end to end."
+  fi
   TOKEN="${TOKEN:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
   [ "${#TOKEN}" -ge 16 ] || die "token is too short to be a challenge nonce"
   printf '%s\n' "$TOKEN" | age --encrypt --recipient "$RECIPIENT" --output "$OUT/attest-challenge.age" || die "could not write the challenge"
-  cp -p "$SNAP" "$SNAP.info" "$IDENTITY" "$OUT/" || die "copy failed"
+  if [ "$WITH_KEY" = 1 ]; then
+    cp -p "$SNAP" "$SNAP.info" "$IDENTITY" "$OUT/" || die "copy failed"
+  else
+    cp -p "$SNAP" "$SNAP.info" "$OUT/" || die "copy failed"
+  fi
   cp -p "$0" "$OUT/offhost_rehearsal.sh" 2>/dev/null || die "could not copy this script into the packet"
   chmod 600 "$OUT"/* 2>/dev/null
   # No angle brackets anywhere in what follows, and the text also lands in HOWTO.txt inside the packet.
@@ -95,6 +109,17 @@ wherever you like, then cd into that directory and run the next two lines from i
 
     sha256sum -c MANIFEST.sha256
     bash offhost_rehearsal.sh verify
+
+WHAT IS IN THIS PACKET: one age-encrypted snapshot, its sidecar, a challenge ciphertext, and this
+script. The private identity is NOT in here by default - split delivery. The other machine must already
+hold the key copy (placed once by hand: password manager entry, printed sheet in a fireproof box, an
+encrypted volume). If it does not, re-run 'make backup-pack WITH_KEY=1' for that first placement and
+treat the resulting packet as secret material end to end.
+
+TRANSPORT. The .age files are safe over any channel - age ciphertext carries no plaintext and no
+material capable of decrypting it. The key is the opposite: never transmit it by email, chat, cloud
+drive, or a pastebin. A loss of the packet alone yields ciphertext nobody can open; that asymmetry is
+the entire reason for split delivery.
 
 verify checks the manifest BEFORE decrypting anything, then prints a 32-hex token. Bring only that
 number back and run, on this machine:
@@ -116,7 +141,7 @@ no longer evidence that a key exists elsewhere."
 
   echo "packet    : $OUT  (mode 700, contents 600)"
   echo "snapshot  : $(basename "$SNAP")"
-  echo "identity  : $(basename "$IDENTITY")"
+  echo "identity  : $(basename "$IDENTITY")  $( [ "$WITH_KEY" = 1 ] && echo '(INSIDE the packet)' || echo '(NOT in the packet - the far machine must already hold it)' )"
   echo "recipient : $RECIPIENT"
   echo "howto     : $OUT/HOWTO.txt  (travels with the packet; every step below is also in it)"
   echo
@@ -136,14 +161,44 @@ no longer evidence that a key exists elsewhere."
 ## --------------------------------------------------------------------------- verify
 verify)
   need_tools
+  # Am I the source host? The pending/attested records live only on the machine that issued the
+  # challenge, and that machine also holds a copy of the identity - so running verify here would find a
+  # key, decrypt everything, print a token, and call it proof. It would be a restore rehearsal wearing a
+  # custody proof's clothes. Refuse unless told explicitly that a local rehearsal is what is wanted, and
+  # even then withhold the token, because a token produced on the source host must not be attestable.
+  SOURCE_HOST=0
+  if [ -s "$PENDING" ] || [ -s "$ATTESTED" ]; then SOURCE_HOST=1; fi
+  if [ "$SOURCE_HOST" = 1 ] && [ "${LOCAL_OK:-0}" != 1 ]; then
+    die "this looks like the SOURCE host (an outstanding or consumed challenge record is here) and the identity is on this machine, so decrypting here proves nothing about a copy elsewhere. Finish the rehearsal on the other machine. To rehearse the RESTORE locally instead, re-run with LOCAL_OK=1 - it will not print a token and cannot be attested."
+  fi
+  if [ "$SOURCE_HOST" = 1 ]; then
+    echo "WARNING: local restore rehearsal on the source host. This is NOT off-host custody evidence"
+    echo "         and no attestation token will be printed."
+  fi
   HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$HERE" || die "cannot enter $HERE"
   [ -s MANIFEST.sha256 ] || die "no MANIFEST.sha256 beside me - this is not a packet directory"
   if ! sha256sum -c MANIFEST.sha256; then
     die "manifest mismatch: the packet was altered or truncated in transit; do not attest"
   fi
-  IDENTITY="$(find . -maxdepth 1 -type f -name 'state-recovery-*' -o -maxdepth 1 -type f -name '*recovery*.txt' | head -1)"
-  [ -n "$IDENTITY" ] || die "no recovery identity inside the packet"
+  IDENTITY="$(find . -maxdepth 1 -type f -name '*recovery*.txt' | head -1)"
+  if [ -z "$IDENTITY" ]; then
+    # No key in the packet (the default, split delivery). Look for the placed copy in the standard local
+    # locations - but NEVER fall back to age's ambient identity resolution (an agent, or
+    # ~/.config/age/identities), because a key that merely happens to live on the receiving machine would
+    # then satisfy a proof that is supposed to show a SEPARATE custodied copy exists.
+    # Unquoted on purpose: PLACED_SEARCH is a space-separated list of directories, not one path.
+    # shellcheck disable=SC2086
+    found="$(find ${PLACED_SEARCH:-"$HOME/.config/age /mnt/jol-backup"} -maxdepth 3 -type f -name 'state-recovery-*' 2>/dev/null | head -1)"
+    if [ -n "$found" ] && [ "$(sha256sum "$found" | cut -d' ' -f1)" \
+         != "$(sha256sum "$HOME/.config/age/state-backup-key.txt" 2>/dev/null | cut -d' ' -f1)" ]; then
+      IDENTITY="$found"
+      echo "note: no identity in the packet; using the locally placed copy at $found"
+      echo "      That is a valid proof of a second copy IF this machine is not the source host."
+    fi
+  fi
+  [ -n "$IDENTITY" ] || die "no recovery identity in the packet and none placed on this machine. Put the key copy here first (separately from the packet), or re-pack with WITH_KEY=1 for the initial placement."
+  [ -s "$IDENTITY" ] || die "the identity at $IDENTITY is empty or unreadable"
   SNAP="$(find . -maxdepth 1 -type f -name 'jol-control-terraform.tfstate.*.age' | head -1)"
   if [ -z "$SNAP" ] || [ ! -s "$SNAP.info" ]; then die "no snapshot + sidecar pair inside the packet"; fi
   CHALLENGE=./attest-challenge.age
@@ -171,7 +226,13 @@ verify)
   [ "$got" = "$want" ] || die "md5 $got does not match the sidecar's $want - DIFFERENT INVENTORY"
 
   echo "PASS: snapshot $(basename "$SNAP") decrypts to md5 $got ($sz bytes), matching the sidecar"
-  echo "      challenge decrypted with $(basename "$IDENTITY"); the key in this packet opens both"
+  echo "      challenge decrypted with $(basename "$IDENTITY") (from $(dirname "$IDENTITY")); the same key opens both"
+  if [ "$SOURCE_HOST" = 1 ]; then
+    echo
+    echo "NOT AN ATTESTATION: this ran on the source host, so the token is withheld. The restore half is"
+    echo "proven (the snapshot opens and matches its sidecar); custody is not."
+    exit 0
+  fi
   echo
   echo "ATTEST with the token on the line below. Run 'make backup-attest' on the source machine and paste"
   echo "it at the prompt (32 hex, input hidden). Nothing else from this machine needs to come back:"
@@ -232,7 +293,8 @@ attest)
   [ "$got" = "$want" ] || die "token does not match the outstanding challenge - not attested"
   { printf 'attested=%s\nrecipient=%s\nsnapshot=%s\nchallenge-issued=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rec" "$snap" "$issued"
-    printf 'proof=a nonce encrypted to the recipient was recovered on a machine holding the private half\n'
+    printf 'proof=a nonce encrypted to the recipient was recovered by decrypting on another machine;\n'
+    printf '     the token was never printed on this host, and the source host refuses to run verify\n'
   } > "$ATTESTED"
   chmod 600 "$ATTESTED"
   rm -f "$PENDING"

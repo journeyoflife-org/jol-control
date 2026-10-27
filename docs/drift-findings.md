@@ -43,7 +43,8 @@ documents cite them. In numeric order:
 | S2-019 | The custody challenge printed its own secret to stdout, so the transcript could attest without the key | closed same session; fingerprint only now, case 52 |
 | S2-020 | The backup suite depended on a file no CI runner has, so the merge commit would have gone red on four cases | closed; SRC is an input now, runner-shaped census measured 30/22 |
 | S2-021 | `retire_recovery_key.sh` printed the proof-of-custody nonce three times, including in a runnable command line | closed; fingerprint + hidden prompt, retire suite 15 → 20 cases |
-| S2-022 | A custody challenge had no lifetime, and re-packing silently orphaned any packet in transit | closed; 168h bound + warning, backup suite 56 → 58 cases |
+| S2-022 | A custody challenge had no lifetime, and re-packing silently orphaned any packet in transit | closed; 168h bound + warning, backup suite 56 → 62 cases |
+| S2-023 | The custody packet carried key and ciphertext together, and `verify` could run on the source host | closed; split delivery + source-host refusal, 6 cases added |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1671,7 +1672,7 @@ by reviewing my own hardening commit, or by following the runbook as an operator
    on this host, so mode `664` — and `rm -f "$DEC"` was the *next statement* after a call that can
    fail, so under `set -e` it never ran. The per-function `trap 'rm -f "$t"' RETURN` did not help:
    `RETURN` does not fire when the function calls `exit`, and does not fire when `set -e` aborts
-   mid-function. Net effect: the full inventory of 40 repositories, in plaintext credentials, beside the
+   mid-function. Net effect: the full inventory of 40 repositories in plaintext, beside the
    ciphertext, on the backup disk — produced by the script this register previously described as
    "fail-closed". That description was itself the overstatement: **the label came from me, the leak
    came from the code, and only the review caught it.** Fixed by `umask 077`, one `EXIT` trap covering
@@ -1865,7 +1866,14 @@ covered. What it costs is stated by counting what sits on each device:
 | `nvme0n1` | 3 (older set) | **2** |
 
 **Each device now holds a key together with data that key opens.** Physical theft of either disk yields
-the infrastructure inventory of 40 repositories, including whatever credentials the state records. The
+the infrastructure inventory of 40 repositories. Measured on 2026-10-28, `terraform.tfstate` holds no
+credential at all - `github_repository`, `github_branch_protection` and
+`github_repository_vulnerability_alerts` only, and a grep for `ghp_`/`gho_`/`AGE-SECRET-KEY`/
+`BEGIN PRIVATE KEY`/`AKIA` returns 0 hits; the sole secret-shaped attribute name is the boolean
+`private`. What a thief reads is the map: which repositories exist, which are private, which protections
+and vulnerability alerts are on, and which names are missing from the allow-list. The state file is a
+description of the estate, not a vault of its secrets, and the register said "credentials" because an
+earlier entry was written without measuring. The
 `keys/` directory also arrived as mode `775` (group/other may list it) where the file inside is `600`, so
 the tight form is `chmod 700` on the directory.
 
@@ -2094,7 +2102,7 @@ precondition contributed nothing and said nothing, so a partial run is indisting
 Both 51 and 52 now announce a skip. This is trap 15's shape again, one layer up: an unreported absence of
 evidence is not a pass, including about the tests themselves.
 
-**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (50 → 58 cases).
+**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (50 → 62 cases).
 
 ### S2-020: the gate that tests the backup script could not run where it is scheduled to run
 
@@ -2212,6 +2220,47 @@ after each, `md5sum` compared.
 
 **Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (56 → 58),
 `docs/runbooks.md` RB-09.
+
+### S2-023: the remedy for a single-carrier failure was itself a single carrier
+
+**Discovered:** 2026-10-28, when asked plainly whether this whole exercise was being done correctly  
+**Status:** CLOSED in code (cases 59–62, suite 58 → 62). The packet already carried on this host was built
+by the old behaviour and must be re-made — see the operator step in RB-09.  
+**Severity:** S1-shaped: it did not weaken a control at the margin, it inverted the control's purpose.
+
+S2-014 says the defect is that a key sits beside the ciphertext it opens, so an NVMe failure leaves the
+inventory unreadable. The cure — carry a key copy to another machine — was implemented by putting **the key
+and the snapshot in one directory** and telling the operator to carry that directory. One lost stick, one
+laptop surrendered for repair, one intercepted transfer then yields both halves in a single act: strictly
+*worse* than the arrangement it replaced, which at least required two devices to fail together. The
+measured packet contents were `attest-challenge.age`, the snapshot, its sidecar, `MANIFEST.sha256`,
+`offhost_rehearsal.sh`, **`state-recovery-20261027-b.txt`**.
+
+**Fix: split delivery, as the default.** `pack` now omits the identity (`WITH_KEY=1` puts it back for the
+first placement, and says so on stdout). `verify` finds the placed copy under a configurable search path
+(`PLACED_SEARCH`, defaulting to `~/.config/age` and the off-device mount) and **never** falls back to age's
+ambient identity resolution — an agent or `~/.config/age/identities` on the receiving machine would satisfy
+a proof that is supposed to show a *separately custodied* copy. Case 59 asserts the key is absent from a
+default packet; case 62 asserts the round trip still completes when a copy was placed separately.
+
+**Second defect, same family: `verify` ran on the source host.** The identity is here, so decrypting here
+succeeds, prints a token, and the operator could attest immediately without anything ever leaving the
+machine — a restore rehearsal laundered as custody evidence. The runbook said "do not run verify here", in
+prose, which is precisely the kind of control this register has already shown fails. `verify` now detects
+the source host by the only local signal that means it — an outstanding or consumed challenge record — and
+refuses. `LOCAL_OK=1` permits a deliberate local restore rehearsal, which prints the restore verdict and
+**withholds the token**, so it cannot be turned into an attestation (cases 60, 61; 61 asserts absence of
+the known token, not merely the presence of a warning).
+
+**Worth separating, because compliance readers conflate them.** The two halves of this rehearsal answer
+different questions and one can pass while the other fails: *does a copy exist elsewhere that works*
+(custody, ISO 27001 A.5.17/A.8.24, the S2-014 line) and *can we actually restore* (availability, GDPR
+Art. 32(1)(c), the A.8.13 backup control). A local `LOCAL_OK=1` run proves the second and must never be
+filed as evidence for the first - and it cannot be, because a local rehearsal withholds the token and so
+never writes a record at all. The `proof=` line in the attested record names the mechanism it relied on.
+
+**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (58 → 62),
+`docs/runbooks.md` RB-08/RB-09, `AGENTS.md` §3.
 
 ---
 

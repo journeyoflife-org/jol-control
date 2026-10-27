@@ -399,7 +399,7 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
   rm -f "$RK/plain.json"
   RENV=(KEYDIR="$KB" DEST="$DB" REPO="$HB" RECIPIENT_FILE="$KB/offdisk-recipient.txt")
 
-  rh 0 "33 pack builds a packet"                     "CARRY the whole directory" "${RENV[@]}" OUT="$KB/offhost-packet" -- bash "$RH" pack
+  rh 0 "33 pack builds a packet"                     "CARRY the whole directory" "${RENV[@]}" WITH_KEY=1 OUT="$KB/offhost-packet" -- bash "$RH" pack
   dmode=$(stat -c '%a' "$KB/offhost-packet" 2>/dev/null || echo 000)
   if [ "$dmode" = 700 ]; then pass=$((pass+1)); echo "  ok    34 packet dir is 700"
   else fail=$((fail+1)); echo "  FAIL  34 packet dir mode is $dmode, want 700"; fi
@@ -415,10 +415,14 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
   # Relocate, then DELETE the source. Without the delete the old absolute manifest "verified" the
   # originals and reported success for a copy that was never checked.
   cp -a "$KB/offhost-packet" "$RK/carried"; rm -rf "$KB/offhost-packet"
-  rh 0 "39 verify after relocation, source deleted"  "PASS: snapshot" -- bash "$RK/carried/offhost_rehearsal.sh" verify
+  # verify refuses to run where a pending/attested record exists (that identifies the source host), so
+  # these two cases point KEYDIR at an empty directory: they are emulating the FAR machine. The source's
+  # own pending record is left alone for the attest cases below.
+  mkdir -p "$KB/fakehome39"
+  rh 0 "39 verify after relocation, source deleted"  "PASS: snapshot" KEYDIR="$KB/fakehome39" PLACED_SEARCH="$KB/fakehome39" -- bash "$RK/carried/offhost_rehearsal.sh" verify
   grep -q "md5 $PMD5" "$W/rho" || { echo "  note   39 PASS did not quote the fixture md5"; }
   RTOK=$(sed -n 's/^  \([0-9a-f]\{32\}\)$/\1/p' "$RK/vtok" 2>/dev/null)
-  timeout 120 bash "$RK/carried/offhost_rehearsal.sh" verify </dev/null >"$RK/vtok" 2>&1 || true
+  timeout 120 env KEYDIR="$KB/fakehome39" PLACED_SEARCH="$KB/fakehome39" bash "$RK/carried/offhost_rehearsal.sh" verify </dev/null >"$RK/vtok" 2>&1 || true
   RTOK=$(sed -n 's/^  \([0-9a-f]\{32\}\)$/\1/p' "$RK/vtok")
   if [ ${#RTOK} = 32 ]; then pass=$((pass+1)); echo "  ok    40 verify emitted a 32-char attestation token"
   else fail=$((fail+1)); echo "  FAIL  40 no token emitted (${#RTOK} chars) - round trip cannot complete"; fi
@@ -428,7 +432,7 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
   rh 1 "43 the same token cannot be used twice"      "no outstanding challenge" "${RENV[@]}" -- bash "$RH" attest "$RTOK"
 
   cp -a "$RK/carried" "$RK/tam"; printf 'x' >> "$RK/tam/attest-challenge.age"
-  rh 1 "44 tampered packet fails the manifest"       "manifest mismatch" -- bash "$RK/tam/offhost_rehearsal.sh" verify
+  rh 1 "44 tampered packet fails the manifest"       "manifest mismatch" KEYDIR="$KB/fakehome39" PLACED_SEARCH="$KB/fakehome39" -- bash "$RK/tam/offhost_rehearsal.sh" verify
   if grep -q 'challenge decrypted' "$W/rho"; then fail=$((fail+1)); echo "  FAIL  44 decrypt ran anyway - manifest is not a gate"; fi
   cp -a "$RK/carried" "$RK/wk"; rm -f "$RK/wk/state-recovery-test.txt"
   age-keygen -o "$RK/wk/state-recovery-test.txt" >/dev/null 2>&1
@@ -436,7 +440,7 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
     fail=$((fail+1)); echo "  FAIL  45 key swap did not take - that case would pass vacuously"
   else
     rm -f "$RK/wk/MANIFEST.sha256"; ( cd "$RK/wk" && sha256sum -- * > MANIFEST.sha256 )
-    rh 1 "45 wrong identity cannot open its challenge" "cannot open its own challenge" -- bash "$RK/wk/offhost_rehearsal.sh" verify
+    rh 1 "45 wrong identity cannot open its challenge" "cannot open its own challenge" KEYDIR="$KB/fakehome39" PLACED_SEARCH="$KB/fakehome39" -- bash "$RK/wk/offhost_rehearsal.sh" verify
   fi
 else
   skip=$((skip+13)); echo "  SKIP   rehearsal scripts or age absent - 13 cases not evaluated"
@@ -604,6 +608,57 @@ if [ -f "$RH" ] && command -v age >/dev/null 2>&1 && [ -n "${KB:-}" ] && [ -d "$
   rm -rf "$KB/packet55" "$KB/packet57" "$KB/packet58" "$KB/s57" "$KB/offhost-attestation.pending" "$KB/offhost-attested"
 else
   skip=$((skip+6)); echo "  SKIP   53-58 rehearsal or age absent - token-input cases not evaluated"
+fi
+
+# 59-62: split delivery and the source-host trap. Two more defects, both found while answering "are we
+# doing this right?": the packet carried the identity AND the ciphertext it opens (one lost stick =
+# everything, the exact single-carrier failure S2-014 describes), and `verify` would run on the SOURCE
+# host, find the local key, print a token and call it custody proof. Neither is a theoretical worry - the
+# packet in use on this host was built by the previous behaviour.
+if [ -f "$RH" ] && command -v age >/dev/null 2>&1 && [ -n "${KB:-}" ] && [ -d "${KB:-}" ]; then
+  KNOWN=0123456789abcdef0123456789abcdef
+  EMPTYPLACED="$KB/nothing-placed"; mkdir -p "$EMPTYPLACED"
+  # A placed key, so 60 and 61 refuse/proceed for the RIGHT reason: the source-host rule must hold even
+  # when a usable identity is present and decryption could succeed.
+  PLACED="$KB/placed-keydir"; mkdir -p "$PLACED"; cp -p "$KB/state-recovery-test.txt" "$PLACED/state-recovery-placed.txt"
+  # 59: the default packet must NOT contain the identity.
+  rm -rf "$KB/split"
+  rc=0; timeout 120 env "${RENV[@]}" OUT="$KB/split" TOKEN="$KNOWN" bash "$RH" pack </dev/null >"$KB/s59" 2>&1 || rc=$?
+  if [ "$rc" = 0 ] && [ -z "$(find "$KB/split" -maxdepth 1 -type f -name '*recovery*' 2>/dev/null)" ] \
+     && [ -s "$KB/split/attest-challenge.age" ] && [ -s "$KB/split/jol-control-terraform.tfstate.20260101T000000Z.age" ] \
+     && grep -q 'NOT in the packet' "$KB/s59"; then
+    pass=$((pass+1)); echo "  ok    59 default packet carries ciphertext only, never the key"
+  else fail=$((fail+1)); echo "  FAIL  59 split delivery not in effect (rc=$rc)"
+    find "$KB/split" -maxdepth 1 -type f | sed 's|^|          |' | head -8; sed -n '1,3p' "$KB/s59" | sed 's/^/          /'; fi
+
+  # 60: running verify where a pending record exists must be refused, even with a usable key at hand.
+  cp -a "$KB/split" "$KB/farhost"
+  rc=0; timeout 120 env KEYDIR="$KB" PLACED_SEARCH="$PLACED" bash "$KB/farhost/offhost_rehearsal.sh" verify </dev/null >"$KB/s60" 2>&1 || rc=$?
+  if [ "$rc" = 1 ] && grep -q 'looks like the SOURCE host' "$KB/s60"; then
+    pass=$((pass+1)); echo "  ok    60 verify refuses on the source host (no self-issued proof)"
+  else fail=$((fail+1)); echo "  FAIL  60 source host could self-attest (rc=$rc)"; sed -n '1,2p' "$KB/s60" | sed 's/^/          /'; fi
+
+  # 61: LOCAL_OK=1 runs the restore rehearsal but withholds the token, so it cannot be laundered into
+  # an attestation. Assert the known token is absent from its output - not merely that a warning printed.
+  rc=0; timeout 120 env KEYDIR="$KB" PLACED_SEARCH="$PLACED" LOCAL_OK=1 bash "$KB/farhost/offhost_rehearsal.sh" verify </dev/null >"$KB/s61" 2>&1 || rc=$?
+  if [ "$rc" = 0 ] && grep -q 'NOT AN ATTESTATION' "$KB/s61" && grep -q 'PASS: snapshot' "$KB/s61" \
+     && ! grep -qF "$KNOWN" "$KB/s61"; then
+    pass=$((pass+1)); echo "  ok    61 local rehearsal proves restore, withholds the token"
+  else fail=$((fail+1)); echo "  FAIL  61 local rehearsal wrong (rc=$rc, token present: $(grep -cF "$KNOWN" "$KB/s61"))"; sed -n '1,3p' "$KB/s61" | sed 's/^/          /'; fi
+
+  # 62: with no record here and a placed identity present, split delivery completes on the far host.
+  mkdir -p "$KB/nothing-placed" "$KB/fakehome/.config/age"
+  cp -p "$KB/state-recovery-test.txt" "$KB/fakehome/.config/age/state-recovery-placed.txt"
+  rm -f "$KB/offhost-attestation.pending" "$KB/offhost-attested"
+  rc=0; timeout 120 env HOME="$KB/fakehome" KEYDIR="$KB/fakehome/.config/age" PLACED_SEARCH="$KB/fakehome/.config/age" \
+      bash "$KB/farhost/offhost_rehearsal.sh" verify </dev/null >"$KB/s62" 2>&1 || rc=$?
+  if [ "$rc" = 0 ] && grep -q 'using the locally placed copy' "$KB/s62" && grep -q 'PASS: snapshot' "$KB/s62" \
+     && grep -qF "$KNOWN" "$KB/s62"; then
+    pass=$((pass+1)); echo "  ok    62 split delivery: key placed separately, packet carries none"
+  else fail=$((fail+1)); echo "  FAIL  62 split-delivery verify failed (rc=$rc)"; sed -n '1,4p' "$KB/s62" | sed 's/^/          /'; fi
+  rm -rf "$KB/split" "$KB/farhost" "$KB/fakehome" "$KB/placed-keydir" "$KB/nothing-placed" "$KB/fakehome39" "$KB/s59" "$KB/s60" "$KB/s61" "$KB/s62"
+else
+  skip=$((skip+4)); echo "  SKIP   59-62 rehearsal or age absent - split-delivery cases not evaluated"
 fi
 
 echo "---"
