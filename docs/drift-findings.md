@@ -479,6 +479,21 @@ them, and neither changed the enforcement state of anything.
     carry the phrase of the case under test. Generalised: **name the thing you believe stopped it, and
     prove the assertion by disabling the thing itself** — an exit code is an aggregate of every check
     downstream of the one you meant to test.
+17. **The defects that reached a human were all in prose, never in the committed code.** Every
+    fail-closed rule built into `scripts/backup_state.sh` — capture the decrypt to a file, test the exit
+    status, reject the empty-input digest, require the config directory to be pinned — was present and
+    working. What actually misled people this session was three commands written as instructions:
+      - "run `backup.sh`", a file that existed only inside a markdown fence → `RC=127`;
+      - `PROOF=<that-nonce>`, a placeholder that reads as literal text → `bash: syntax error near
+        unexpected token 'newline'`; and the same failure a second time as `CHALLENGE_DIR=/tmp`, in the
+        one step whose entire purpose is being somewhere else;
+      - `age --decrypt -i <that-copy> <snapshot> | md5sum`, which printed `d41d8cd9…` — the MD5 of empty
+        input — and exited 0, because the pipe absorbed the failure it was written to detect. Trap 10
+        restated as a rule about code, then violated in a chat message about that same rule.
+    The lesson is not "be careful", it is a standard: **a command written for a human to paste is
+    production code.** It needs no placeholder that parses as syntax, no pipe that can swallow an exit
+    status, and it must be executed verbatim at least once before it is handed over — the same bar
+    applied to the fence in trap 11, which is what caught the others.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 

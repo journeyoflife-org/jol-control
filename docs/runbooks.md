@@ -904,6 +904,16 @@ conclude the backups are gone.
    ls -1 /mnt/jol-backup/jol-state-backup/                              # the existing snapshots are here
    ```
    `findmnt` showing the root device instead of `/dev/sdb1` means it did **not** mount; do not proceed.
+   Then tell systemd about the new line. `mount` reads `/etc/fstab` directly and succeeds without this,
+   which is exactly why it is easy to skip: `sudo systemctl daemon-reload` regenerates
+   `mnt-jol-backup.mount` from fstab. Without it the unit does not exist — verified here, where
+   `/run/systemd/generator/mnt-jol-backup.mount` was absent and `systemctl show` reported an empty
+   `SourcePath` after a successful manual mount. A missing unit still mounts at boot, but it means
+   `systemctl start`, dependencies and any later diagnosis have nothing to act on.
+   ```bash
+   sudo systemctl daemon-reload
+   systemctl show -p SourcePath,UnitFileState mnt-jol\x2dbackup.mount --no-pager   # SourcePath should be /etc/fstab
+   ```
 3. **Record the second recipient** so a scheduled run has something honest to encrypt to. The public
    key is not secret, but keeping it out of the crontab stops the custody topology leaking into every
    process listing.
@@ -928,10 +938,40 @@ conclude the backups are gone.
    refused (unmounted destination, same disk, no usable snapshot), **2** cannot-check (no second
    recipient, uncomputable clock). It exits 2 rather than writing a single-key backup and calling the
    job green.
-5. **Rehearse a restore monthly** to turn the steady `RC=2` into a real `0`: decrypt the newest
-   snapshot **on the machine holding the off-host identity**, compare its md5 to the `.info` sidecar,
-   and record the run. Until that happens, the off-host path is asserted, not demonstrated — which is
-   the sentence S2-012 exists to keep people from skipping.
+5. **Rehearse a restore monthly** to turn the steady `RC=2` into a real `0`. Run this **on the machine
+   holding the off-machine identity**, and note the shape: the decrypt is captured to a file and its
+   exit status tested, never piped into a checksum. `age … | md5sum` prints
+   `d41d8cd98f00b204e9800998ecf8427e` — the MD5 of *empty input* — and exits **0**, so a failed decrypt
+   is indistinguishable from a verified one. That exact command was issued from this runbook's own
+   guidance and produced a false result (see measurement trap 10; this is trap 17).
+   ```bash
+   S=jol-control-terraform.tfstate.<stamp>.age
+   # Copy BOTH files to the other machine: <snapshot>.age and its <snapshot>.age.info sidecar.
+   want=$(awk '/^md5/{print $NF}' "$S.info" 2>/dev/null || true)
+   age --decrypt -i <identity-file> "$S" > /tmp/rehearsal.json 2> /tmp/rehearsal.err
+   rc=$?; sz=$(stat -c%s /tmp/rehearsal.json 2>/dev/null || echo 0)
+   m=$(md5sum /tmp/rehearsal.json 2>/dev/null | cut -d' ' -f1); RESULT=FAIL
+   if   [ "$rc" -ne 0 ]; then echo "FAIL: decrypt exited $rc"; sed -n '1,3p' /tmp/rehearsal.err
+   elif [ "$sz" -lt 1000 ]; then echo "FAIL: only $sz bytes came out - nothing was decrypted"
+   elif [ "$m" = d41d8cd98f00b204e9800998ecf8427e ]; then echo "FAIL: md5 of empty input"
+   elif [ -z "$want" ]; then RESULT=INCONCLUSIVE; echo "INCONCLUSIVE: md5=$m bytes=$sz, but no sidecar to compare against"
+   elif [ "$m" != "$want" ]; then echo "FAIL: md5=$m but the sidecar says $want - DIFFERENT INVENTORY"
+   else RESULT=PASS; echo "PASS: md5=$m bytes=$sz, matches the sidecar"
+   fi
+   shred -u /tmp/rehearsal.json /tmp/rehearsal.err 2>/dev/null || rm -f /tmp/rehearsal.json /tmp/rehearsal.err
+   # Signal, do not narrate. A block that prints FAIL and exits 0 is the false green this whole
+   # section exists to prevent, and it is one `&&` away in a future cron line.
+   [ "$RESULT" = PASS ] || exit 1
+   ```
+   `INCONCLUSIVE` is a distinct outcome on purpose: a rehearsal without the expected value proves only
+   that something decrypted, which is the claim that has been wrong every time in this file. It exits 1
+   as well — unproven is not passed.
+
+   The `shred` is not ceremony: that file is plaintext Terraform state, on a machine that is not this
+   one, holding the inventory of 40 repositories. Record the run — date, snapshot, the md5 that came
+   back, and where the identity now lives — in `docs/drift-findings.md`. Until that happens, the
+   off-host path is asserted, not demonstrated, which is the sentence S2-012 exists to keep people
+   from skipping.
 
 **Rollback:** restore the `/etc/fstab` backup from step 2 and `sudo umount /mnt/jol-backup`; restore
 the crontab from step 4's capture with `crontab <file`. Neither step touches the snapshots themselves,

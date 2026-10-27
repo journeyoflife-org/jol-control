@@ -294,6 +294,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **A verification command this project recommended to the operator could not fail.** `age --decrypt -i
+  <copy> <snapshot> | md5sum` — offered while checking whether the off-machine key copy worked — printed
+  `d41d8cd98f00b204e9800998ecf8427e`, the MD5 of *empty input*, and exited 0, because the pipe absorbed
+  the very failure it was written to detect. That is measurement trap 10, a rule this changelog had
+  already recorded, broken again in prose rather than in code. RB-09 step 5 now carries a fail-closed
+  rehearsal block (capture to a file, test the exit status, reject an implausible size and the
+  empty-input digest, then shred the plaintext), and **measurement trap 17** names the pattern: the
+  commands that reached a human were the broken ones — three times over (`backup.sh` that did not exist,
+  `PROOF=<that-nonce>`, `CHALLENGE_DIR=/tmp`) — while every committed script held its own bar
+- **`RB-09`'s fstab step omitted `systemctl daemon-reload`.** `mount` reads `/etc/fstab` directly and so
+  succeeds anyway, which is why the omission stays invisible: verified on this host, after a working
+  manual mount of `/dev/sdb1` at `/mnt/jol-backup`, `/run/systemd/generator/mnt-jol-backup.mount` did not
+  exist and `systemctl show` returned an empty `SourcePath`. The step now reloads and checks for the unit
 - **S2-014 — the off-device backups are undecryptable in the scenario they were created for.** Measured
   with `findmnt --target` then `lsblk -no PKNAME`: the live state and **both** age private keys are on
   `nvme0n1`; the two `age`-encrypted snapshots are on `sdb`; no key exists on `sdb` or off the machine.
