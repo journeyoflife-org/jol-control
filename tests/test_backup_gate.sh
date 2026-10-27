@@ -417,9 +417,9 @@ if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v 
   cp -a "$KB/offhost-packet" "$RK/carried"; rm -rf "$KB/offhost-packet"
   rh 0 "39 verify after relocation, source deleted"  "PASS: snapshot" -- bash "$RK/carried/offhost_rehearsal.sh" verify
   grep -q "md5 $PMD5" "$W/rho" || { echo "  note   39 PASS did not quote the fixture md5"; }
-  RTOK=$(sed -n 's/^  ATTEST \([0-9a-f]\{32\}\) .*/\1/p' "$RK/vtok" 2>/dev/null)
+  RTOK=$(sed -n 's/^  \([0-9a-f]\{32\}\)$/\1/p' "$RK/vtok" 2>/dev/null)
   timeout 120 bash "$RK/carried/offhost_rehearsal.sh" verify </dev/null >"$RK/vtok" 2>&1 || true
-  RTOK=$(sed -n 's/^  ATTEST \([0-9a-f]\{32\}\) .*/\1/p' "$RK/vtok")
+  RTOK=$(sed -n 's/^  \([0-9a-f]\{32\}\)$/\1/p' "$RK/vtok")
   if [ ${#RTOK} = 32 ]; then pass=$((pass+1)); echo "  ok    40 verify emitted a 32-char attestation token"
   else fail=$((fail+1)); echo "  FAIL  40 no token emitted (${#RTOK} chars) - round trip cannot complete"; fi
 
@@ -546,6 +546,44 @@ else
   # machine that ran 51 of them reads identical to a full run. This exact silence is what made an early
   # mutation result here uninterpretable.
   skip=$((skip+1)); echo "  SKIP   52 rehearsal or age absent - token-leak case not evaluated"
+fi
+
+# 53-55: the token must be impossible to feed in wrong. A placeholder typed literally into a shell has
+# broken four instructions in this project (`PROOF=<that-nonce>`, `CHALLENGE_DIR=/tmp`, `backup.sh` that
+# never existed, `make backup-attest TOKEN=<the 32 hex it prints>`), so `attest` now prompts, validates
+# the shape, and names the placeholder explicitly instead of reporting a hash mismatch.
+if [ -f "$RH" ] && command -v age >/dev/null 2>&1 && [ -n "${KB:-}" ] && [ -d "${KB:-}" ]; then
+  rh 1 "53 a pasted placeholder is refused by name"  "placeholder text from the instructions" \
+    "${RENV[@]}" -- bash "$RH" attest '<the 32 hex it prints>'
+  rh 1 "54 a malformed token is refused, value not echoed" "must be 32 hex digits" \
+    "${RENV[@]}" -- bash "$RH" attest 'hunter2'
+  # 55: the prompt path really works - the token arrives on stdin with no argument anywhere. The
+  # challenge is packed with a KNOWN token, because the first draft of this case piped the token from an
+  # earlier packet while `pack` had just minted a fresh random one: the script was right and the test was
+  # wrong, and it took the failure to show it.
+  rc=0; timeout 120 env "${RENV[@]}" OUT="$KB/packet55" TOKEN="$KNOWN" bash "$RH" pack </dev/null >/dev/null 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then fail=$((fail+1)); echo "  FAIL  55 repacking for the prompt path failed (rc=$rc)"
+  else
+    printf '%s\n' "$KNOWN" | timeout 120 env "${RENV[@]}" bash "$RH" attest >/tmp/.t55 2>&1; rc=$?
+    if [ "$rc" = 0 ] && grep -q 'ATTESTED: recorded' /tmp/.t55; then
+      pass=$((pass+1)); echo "  ok    55 attest reads the token from the prompt (no argument, no placeholder)"
+    else fail=$((fail+1)); echo "  FAIL  55 prompt path rc=$rc"; sed -n '1,3p' /tmp/.t55 | sed 's/^/          /'
+    fi
+    rm -f /tmp/.t55 "$KB/offhost-attested" "$KB/offhost-attestation.pending"
+  fi
+  # 56: the instructions travel inside the packet, so they must not have been rendered on THIS machine.
+  # The HOWTO was written inside a double-quoted string containing $PWD, which expands at assignment -
+  # it would have told the far operator to shred a directory path that only exists here.
+  if [ -s "$RK/carried/HOWTO.txt" ]; then
+    # shellcheck disable=SC2016  # literal '$PWD' is the thing under test; it must NOT be expanded here
+    if grep -qF '$PWD' "$RK/carried/HOWTO.txt" && ! grep -qF "$W/" "$RK/carried/HOWTO.txt"; then
+      pass=$((pass+1)); echo "  ok    56 HOWTO travelled with a literal \$PWD, not a rendered local path"
+    else fail=$((fail+1)); echo "  FAIL  56 HOWTO was expanded on the source machine - it instructs the wrong host"
+      grep -n 'PWD\|tmp' "$RK/carried/HOWTO.txt" | head -3 | sed 's/^/          /'; fi
+  else fail=$((fail+1)); echo "  FAIL  56 HOWTO.txt absent from the packet"; fi
+  rm -rf "$KB/packet55"
+else
+  skip=$((skip+3)); echo "  SKIP   53-55 rehearsal or age absent - token-input cases not evaluated"
 fi
 
 echo "---"

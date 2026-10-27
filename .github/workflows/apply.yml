@@ -96,7 +96,7 @@ jobs:
         run: python3 tests/test_agents_gate.py
 
       - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
-        # 52 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
+        # 56 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
         # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Measured in a
         # runner-shaped run (age probe off, state absent): **30 pass, 22 skip, exit 0**. Reaching that
         # took a fix: cases 3, 4, 21 and 23 defaulted SRC to $REPO/terraform.tfstate, which no runner has
@@ -118,7 +118,7 @@ jobs:
         run: bash tests/test_backup_gate.sh
 
       - name: Retire Gate Self-Test (prove custody must be shown before destruction)
-        # 15 cases over scripts/retire_recovery_key.sh. The property is not "does it delete" but
+        # 20 cases over scripts/retire_recovery_key.sh. The property is not "does it delete" but
         # "can anything delete an identity WITHOUT proof", so every refusal case also asserts the
         # identity is still on disk - a gate that destroys on failure is worse than no gate. It also
         # refuses when the challenge directory resolves to the identity's own disk, which is the hole
@@ -132,7 +132,7 @@ jobs:
           if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
             bash tests/test_retire_gate.sh
           else
-            echo "::notice title=Retire gate UNEVALUATED::age is not installed on this runner, so the 15 retirement cases did not execute. Absence of a failure here is not a pass."
+            echo "::notice title=Retire gate UNEVALUATED::age is not installed on this runner, so the 20 retirement cases did not execute. Absence of a failure here is not a pass."
             echo "Retire gate: **UNEVALUATED on this runner** (no age) - not a pass." >> "$GITHUB_STEP_SUMMARY"
           fi
 

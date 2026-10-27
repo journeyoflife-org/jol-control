@@ -61,13 +61,16 @@ retire-key: ## Retire an age recovery identity ONLY after proving a copy on anot
 	@test -n "$(KEY)" || { echo "usage: make retire-key KEY=~/.config/age/<identity-file> CHALLENGE_DIR=<dir on a SECOND disk>"; \
 		echo "       CHALLENGE_DIR must be on another physical disk; /tmp will be refused, because a"; \
 		echo "       nonce recovered from the disk you are about to wipe proves nothing about a copy."; \
-		echo "       then: make retire-key KEY=... CHALLENGE_DIR=... PROOF=<the nonce>"; exit 1; }
+		echo "       phase 2 (destroys nothing until the proof is produced):"; \
+		echo "         make retire-key KEY=... CHALLENGE_DIR=... RETIRE=1"; \
+		echo "       it asks for the 32-hex nonce and hides what you type — there is no placeholder to edit."; exit 1; }
 	@test -n "$(CHALLENGE_DIR)" || { echo "usage: make retire-key KEY=$(KEY) CHALLENGE_DIR=<dir on a SECOND disk>"; exit 1; }
-	@test -z "$(PROOF)" || { echo "retiring $(KEY) with proof"; \
+	@if [ -n "$(RETIRE)" ] || [ -n "$(PROOF)" ]; then \
+		echo "retiring $(KEY) — refused, with the identity left in place, unless the proof matches"; \
 		RETIRE_PROOF='$(PROOF)' bash scripts/retire_recovery_key.sh '$(KEY)' \
-			--challenge-dir '$(or $(CHALLENGE_DIR),.)' --retire; }
-	@test -n "$(PROOF)" || bash scripts/retire_recovery_key.sh '$(KEY)' \
-		--challenge-dir '$(or $(CHALLENGE_DIR),.)'
+			--challenge-dir '$(or $(CHALLENGE_DIR),.)' --retire; \
+	else bash scripts/retire_recovery_key.sh '$(KEY)' \
+		--challenge-dir '$(or $(CHALLENGE_DIR),.)'; fi
 
 agents-gate: ## STOP gate — is AGENTS.md section 2 still a well-formed table with evidence per row
 	python3 scripts/validate_agents_table.py AGENTS.md

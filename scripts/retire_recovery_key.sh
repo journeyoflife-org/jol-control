@@ -67,7 +67,7 @@ SEAL="$CDIR/offhost-challenge.seal"
 
 if [ "$RETIRE" != 1 ]; then
   # Phase 1: mint a nonce only the holder of the private half can recover.
-  NONCE="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  NONCE="${NONCE:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
   printf '%s\n' "$NONCE" | age --encrypt --recipient "$PUB" --output "$CH" || {
     echo "FAIL: could not create the challenge ciphertext"; exit 2; }
   # The seal holds the expected answer, hashed. Never in plaintext: this file sits next to the
@@ -76,15 +76,22 @@ if [ "$RETIRE" != 1 ]; then
   printf '%s' "$NONCE" | sha256sum | cut -d' ' -f1 > "$SEAL"
   echo "recipient   : $PUB"
   echo "challenge   : $CH"
-  echo "nonce given : $NONCE"
+  # The nonce value is NEVER printed here. Lines 79/84/87 of the previous revision printed it three
+  # times, once inside a ready-to-run command line that also lands in shell history and in this
+  # terminal's scrollback - so the "proof that a copy exists elsewhere" was obtainable from the very
+  # machine the proof is supposed to exclude. For an irreversible action that is worse than the
+  # equivalent bug in offhost_rehearsal.sh (finding S2-019), because the failure is not a weak record,
+  # it is a destroyed key that nothing can open the backups with.
+  echo "nonce       : fingerprint $(printf '%s' "$NONCE" | sha256sum | cut -d' ' -f1 | cut -c1-16)… (value not printed)"
   echo
   echo "NEXT, AND THIS IS THE WHOLE POINT - on the machine that holds the OTHER COPY:"
   echo "  1. copy $CH there (and nothing else; the identity itself must not come back)"
-  echo "  2. age -d -i <path-to-the-off-host-copy> $(basename "$CH")"
-  echo "  3. it must print exactly: $NONCE"
+  echo "  2. age --decrypt -i <path to the off-host copy> $(basename "$CH")     # run from inside that dir"
+  echo "  3. it prints the nonce; check its fingerprint above, then bring ONLY the value back"
   echo
-  echo "Then come back and run, on this host:"
-  echo "  RETIRE_PROOF=$NONCE scripts/retire_recovery_key.sh $ID --challenge-dir $CDIR --retire"
+  echo "Then come back and run, on this host, with NO argument to edit — it prompts and hides the typing:"
+  echo "  scripts/retire_recovery_key.sh $ID --challenge-dir $CDIR --retire"
+  echo "  (or: make retire-key KEY=$ID CHALLENGE_DIR=$CDIR --retire)"
   echo
   echo "Nothing has been destroyed. The identity stays until the proof is produced."
   exit 0
@@ -94,10 +101,27 @@ fi
 [ -s "$SEAL" ] || { echo "FAIL: no seal at $SEAL - run phase 1 first (or the seal was lost)."; exit 2; }
 [ -s "$CH" ]    || { echo "FAIL: no challenge at $CH - run phase 1 first."; exit 2; }
 if [ -z "${RETIRE_PROOF:-}" ]; then
-  echo "REFUSED: RETIRE_PROOF is not set."
-  echo "         The nonce is only obtainable by decrypting $(basename "$CH") with the off-host copy."
-  echo "         If you cannot produce it, the copy does not work - do NOT retire this identity."; exit 1
+  # Prompt rather than demand an argument. A placeholder an operator must substitute has broken five
+  # instructions in this project, one of them this exact line (`PROOF=<that-nonce>` typed literally,
+  # `bash: syntax error near unexpected token 'newline'`).
+  printf 'proof nonce from the off-host copy (32 hex, input hidden): ' >&2
+  # No terminal to read from is a REFUSAL (1), not UNEVALUATED (2): nothing is unknown, the proof simply
+  # was not offered, and the identity must stay. Exit 2 here would blur "cannot ask" into "cannot tell".
+  IFS= read -r -s RETIRE_PROOF || { echo "REFUSED: no proof offered and no terminal to ask for it."
+    echo "         Run this interactively, or pass RETIRE_PROOF=<the 32 hex from the other machine>." >&2
+    exit 1; }
+  printf '\n' >&2
 fi
+RETIRE_PROOF="$(printf '%s' "$RETIRE_PROOF" | tr -d ' \t\r\n')"
+# shellcheck disable=SC2016  # literal placeholder shapes are what is being detected, not expanded
+case "$RETIRE_PROOF" in
+  *'<'*|*'…'*|*'$('*|'the')
+    echo "REFUSED: that is placeholder text from the instructions, not a nonce. Run the --retire command"
+    echo "         with no RETIRE_PROOF and paste the 32 hex digits at the prompt."; exit 1 ;;
+esac
+printf '%s' "$RETIRE_PROOF" | grep -qE '^[0-9a-f]{32}$' || {
+  echo "REFUSED: proof must be 32 hex digits; got ${#RETIRE_PROOF} characters (value not echoed)."
+  echo "         The identity is left exactly where it was."; exit 1; }
 EXPECTED="$(cat "$SEAL")"
 ACTUAL="$(printf '%s' "$RETIRE_PROOF" | sha256sum | cut -d' ' -f1)"
 if [ "$ACTUAL" != "$EXPECTED" ]; then

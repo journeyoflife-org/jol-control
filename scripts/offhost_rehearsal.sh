@@ -75,7 +75,29 @@ pack)
   cp -p "$SNAP" "$SNAP.info" "$IDENTITY" "$OUT/" || die "copy failed"
   cp -p "$0" "$OUT/offhost_rehearsal.sh" 2>/dev/null || die "could not copy this script into the packet"
   chmod 600 "$OUT"/* 2>/dev/null
-  # RELATIVE names, generated from inside the directory, so the manifest travels with the packet.
+  # No angle brackets anywhere in what follows, and the text also lands in HOWTO.txt inside the packet.
+  # A placeholder an operator must edit before running is a defect with a known failure mode: this is the
+  # fifth such instance in one day. `verify` locates its own directory, so the only thing the far side has
+  # to choose is where to put the folder - which needs no command line at all.
+  HOWTO="Carry this whole directory to the other machine by any means that is not this machine. Put it
+wherever you like, then cd into that directory and run the next two lines from inside it:
+
+    sha256sum -c MANIFEST.sha256
+    bash offhost_rehearsal.sh verify
+
+verify checks the manifest BEFORE decrypting anything, then prints a 32-hex token. Bring only that
+number back and run, on this machine:
+
+    make backup-attest
+
+It prompts and hides what you type. Then delete this directory from the other machine, unless that
+machine is where custody is meant to live:
+
+    find \"\$PWD\" -maxdepth 1 -type f -exec shred -u {} + && rmdir \"\$PWD\"
+
+Do NOT run verify on this machine: it prints the token here, and a token that reached this terminal is
+no longer evidence that a key exists elsewhere."
+  printf '%s\n' "$HOWTO" > "$OUT/HOWTO.txt"; chmod 600 "$OUT/HOWTO.txt"
   ( cd "$OUT" && sha256sum -- * > MANIFEST.sha256 ) || die "manifest generation failed"
   printf 'issued=%s\nrecipient=%s\nsnapshot=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RECIPIENT" "$(basename "$SNAP")" > "$PENDING"
   printf 'tokenhash=%s\n' "$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)" >> "$PENDING"
@@ -85,12 +107,14 @@ pack)
   echo "snapshot  : $(basename "$SNAP")"
   echo "identity  : $(basename "$IDENTITY")"
   echo "recipient : $RECIPIENT"
+  echo "howto     : $OUT/HOWTO.txt  (travels with the packet; every step below is also in it)"
   echo
-  echo "CARRY the whole directory to the other machine (nothing else back), then run THERE:"
-  echo "  cd <where you put it> && sha256sum -c MANIFEST.sha256 && bash offhost_rehearsal.sh verify"
+  echo "CARRY the whole directory. On the other machine, cd INTO it and run those two lines from there:"
+  echo "  sha256sum -c MANIFEST.sha256"
+  echo "  bash offhost_rehearsal.sh verify"
   echo
-  echo "It prints an ATTEST line. Bring only that line back and run:"
-  echo "  make backup-attest TOKEN=<the token it prints>"
+  echo "Attest on THIS machine with no argument - it will ask for the token and hide what you type:"
+  echo "  make backup-attest"
   # The token value is deliberately NOT printed here. It is the secret half of a proof-of-possession:
   # printing it into stdout puts it in terminal scrollback, agent transcripts and any captured log, and
   # anyone holding the transcript could then attest without holding any key - which is precisely the
@@ -138,8 +162,12 @@ verify)
   echo "PASS: snapshot $(basename "$SNAP") decrypts to md5 $got ($sz bytes), matching the sidecar"
   echo "      challenge decrypted with $(basename "$IDENTITY"); the key in this packet opens both"
   echo
-  echo "ATTEST with exactly this line, on the source machine:"
-  echo "  ATTEST $TOKEN $got"
+  echo "ATTEST with the token on the line below. Run 'make backup-attest' on the source machine and paste"
+  echo "it at the prompt (32 hex, input hidden). Nothing else from this machine needs to come back:"
+  echo "  $TOKEN"
+  echo "(printing it HERE is deliberate: on this machine the value is only obtainable by someone already"
+  echo " holding the identity, which is the whole point - do NOT run 'verify' back on the source host,"
+  echo " because that puts the answer into this machine's scrollback and transcripts and voids the proof)"
   echo
   echo "Then DELETE this packet directory from the machine you copied it to, unless that machine is"
   echo "where you intend the custody copy to live:"
@@ -147,8 +175,28 @@ verify)
   ;;
 ## --------------------------------------------------------------------------- attest (source machine)
 attest)
+  # The token arrives by PROMPT, not by a placeholder in a command line. Four commands handed to a human
+  # in this project have been broken by an angle-bracket stand-in typed literally into a shell
+  # (`PROOF=<that-nonce>`, `CHALLENGE_DIR=/tmp`, a `backup.sh` that never existed, and
+  # `make backup-attest TOKEN=<the 32 hex it prints>` which produced `bash: syntax error near
+  # unexpected token 'newline'`). An instruction that must be edited before it can run is the defect;
+  # running it with no argument and pasting at the prompt is the same action with nothing to get wrong.
   TOKEN="${1:-}"
-  [ -n "$TOKEN" ] || die "usage: scripts/offhost_rehearsal.sh attest <token printed by verify>"
+  if [ -z "$TOKEN" ]; then
+    printf 'challenge token from the ATTEST line (32 hex, input hidden): ' >&2
+    IFS= read -r -s TOKEN || unk "no token supplied (read failed)"
+    printf '\n' >&2
+  fi
+  TOKEN="$(printf '%s' "$TOKEN" | tr -d ' \t\r\n')"
+  # Single quotes are deliberate: these are literal placeholder shapes, not expansions.
+  # shellcheck disable=SC2016
+  case "$TOKEN" in
+    *'<'*|*'…'*|*'$('*|'the')
+      die "that is the placeholder text from the instructions, not a token. Run 'make backup-attest' with no argument and paste the 32 hex digits the other machine printed."
+      ;;
+  esac
+  printf '%s' "$TOKEN" | grep -qE '^[0-9a-f]{32}$' \
+    || die "token must be 32 hex digits; got ${#TOKEN} characters (the value is not echoed here)"
   [ -s "$PENDING" ] || die "no outstanding challenge in $PENDING - run 'pack' first"
   want="$(sed -n 's/^tokenhash=//p' "$PENDING")"
   rec="$(sed -n 's/^recipient=//p' "$PENDING")"

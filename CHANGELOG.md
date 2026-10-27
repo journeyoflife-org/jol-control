@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 52 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 56 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -342,6 +342,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-021 — the destruction gate printed the secret that justified it.** `retire_recovery_key.sh` phase 1
+  printed the custody nonce three times, once inside a ready-to-run `RETIRE_PROOF=$NONCE …` line that also
+  lands in shell history. Anyone with one copy and no off-host at all could read their own terminal, paste
+  the number, and successfully `shred` the only identity that opens the off-device backups — the precise
+  incident (S2-013) this script exists to prevent. Phase 1 now prints only a SHA-256 fingerprint, `NONCE`
+  is overridable so the suite can inject a known value (grepping a random one passes either way), and
+  phase 2 prompts with hidden input. Retire suite 15 → 20 cases. Case 4 was also rewritten because it had
+  been passing on the *shape* rejection rather than the comparison it names; it now supplies a well-formed
+  wrong nonce and requires the words `does not match the challenge`. Four mutations, each caught by its
+  named case: printing the nonce (2 and 19), removing the hex-shape check (17), removing the placeholder
+  refusal (16), disabling the prompt path (18).
+- **Both custody flows now refuse placeholders by design instead of documenting them away.** A third
+  instance of the same failure — `make backup-attest TOKEN=<the 32 hex it prints>` typed literally,
+  `bash: syntax error near unexpected token 'newline'` — appeared in a reply that claimed placeholders had
+  been removed, which is measurement trap 23: telling a human to edit a command is not a fix. `attest` and
+  the retire path take the secret from a hidden prompt, name the placeholder text when they see it, and
+  validate the 32-hex shape before comparing anything; `make retire-key` gained `RETIRE=1` so phase 2 needs
+  no argument. `offhost_rehearsal.sh` also writes `HOWTO.txt` **into the packet**, with no angle brackets
+  anywhere — the far machine's instructions should not depend on this machine's terminal, and a `$PWD` in
+  that text was caught being expanded on the wrong host (case 56).
 - **S2-020 — the backup suite could not run where it is scheduled to run.** Its own header says the guard
   cases need "jq only — these run anywhere", but cases 3, 4, 21 and 23 invoked `backup_state.sh` without
   `SRC`, defaulting it to `$REPO/terraform.tfstate` — gitignored, so absent from every checkout. Run under
@@ -350,7 +370,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit input of `state_backup_guard.sh` too, forwarded to the backup script, and the lineage
   cross-check reads the *same* file it protects; the guard cases supply the synthetic populated state that
   already existed for case 9, and the identity cases (46-50) now execute in CI rather than skipping there.
-  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **52 passed, 0
+  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **56 passed, 0
   failed**. No behaviour change on this host — the default is still `$REPO/terraform.tfstate`
 - **S2-019 — the custody challenge printed its own answer.** `offhost_rehearsal.sh pack` ended by echoing
   the nonce it had just encrypted to the off-device recipient ("for comparison only"). That nonce *is* the
@@ -363,7 +383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reverting the fix in place makes the suite report `51 passed, 1 failed` naming the leak. **The harness
   was the second bug**: a first mutation run looked "undetected" because it printed an exit code without
   the census, and cases 51/52 had no `else` — a skipped case was indistinguishable from a passed one.
-  Both now announce a skip (suite 50 → 52 cases)
+  Both now announce a skip (suite 50 → 56 cases)
 - **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
   outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
   `/mnt/jol-backup/jol-state-backup` — the destination RB-08/RB-09 used until this change moved ours to

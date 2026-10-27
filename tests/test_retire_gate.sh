@@ -59,24 +59,34 @@ echo "retire_recovery_key.sh self-test"
 echo
 
 mint
-timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" </dev/null >"$W/o" 2>&1
+# A KNOWN nonce is injected so "the value never reaches stdout" can be asserted at all. With a random
+# nonce, grepping the output for it would pass no matter what the script printed - the same vacuous-shape
+# trap that case 45 of the backup suite was written around.
+K1=11111111111111111111111111111111
+K2=22222222222222222222222222222222
+timeout 60 env NONCE="$K1" "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" </dev/null >"$W/o" 2>&1
 rc=$?
 if [ "$rc" = 0 ] && [ -s "$W/chal/offhost-challenge.age" ] && [ -s "$W/chal/offhost-challenge.seal" ] && alive; then
   ok "1 phase 1 writes challenge + seal and destroys nothing" "rc=0"
 else bad "1 phase 1 writes challenge + seal and destroys nothing" "rc=$rc"; fi
-NONCE="$(sed -n 's/^nonce given : //p' "$W/o")"
-if [ -n "$NONCE" ]; then ok "2 a nonce is issued to the operator" "len=${#NONCE}"
-else bad "2 a nonce is issued to the operator" "empty"; fi
+if grep -qF 'fingerprint' "$W/o" && ! grep -qF "$K1" "$W/o"; then
+  ok "2 phase 1 prints a fingerprint, never the nonce" "value absent from stdout"
+else bad "2 phase 1 prints a fingerprint, never the nonce" "nonce leaked into stdout"; sed -n '1,4p' "$W/o" | sed 's/^/          /'; fi
+if grep -q "RETIRE_PROOF=$K1" "$W/o"; then
+  bad "2b no ready-to-run command line carries the secret" "found"
+else ok "2b no ready-to-run command line carries the secret" ""; fi
+NONCE="$K1"
 
 timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" --retire </dev/null >"$W/last" 2>&1
 rc=$?
 if [ "$rc" = 1 ] && alive; then ok "3 retire with NO proof refused, identity survives" "rc=1"
 else bad "3 retire with NO proof refused, identity survives" "rc=$rc"; fi
 
-timeout 60 env RETIRE_PROOF=not-the-nonce "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" --retire </dev/null >"$W/last" 2>&1
+timeout 60 env RETIRE_PROOF="$K2" "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" --retire </dev/null >"$W/last" 2>&1
 rc=$?
-if [ "$rc" = 1 ] && alive; then ok "4 wrong proof refused, identity survives" "rc=1"
-else bad "4 wrong proof refused, identity survives" "rc=$rc"; fi
+if [ "$rc" = 1 ] && alive && grep -q 'does not match the challenge' "$W/last"; then
+  ok "4 wrong proof refused, identity survives" "rc=1, named the mismatch"
+else bad "4 wrong proof refused, identity survives" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
 
 # The seal must not contain the nonce in cleartext, or anyone holding the host passes the test that
 # exists to prove they are not the host.
@@ -155,11 +165,42 @@ if grep -q 'separation   : identity on nvme0n1, challenge on sdb' "$W/last"; the
   ok "15 the separation it relied on is printed, not assumed" ""
 else bad "15 the separation it relied on is printed, not assumed" "not in output"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
 
+# 16-19: how the proof is supplied. A placeholder typed literally into this command produced
+# `bash: syntax error near unexpected token 'newline'` in a real run, so the script now prompts, and the
+# two refusals below are what an operator meets if they paste the instruction text instead of a nonce.
+mint
+timeout 60 env NONCE="$K1" "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" </dev/null >/dev/null 2>&1
+rc=0; timeout 60 env RETIRE_PROOF='<the nonce printed on the other machine>' "$GATE" "$W/iddir/k.txt" \
+  --challenge-dir "$W/chal" --retire </dev/null >"$W/last" 2>&1 || rc=$?
+if [ "$rc" = 1 ] && alive && grep -q 'placeholder text from the instructions' "$W/last"; then
+  ok "16 a pasted placeholder is refused by name" "rc=1, identity intact"
+else bad "16 a pasted placeholder is refused by name" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+
+rc=0; timeout 60 env RETIRE_PROOF='hunter2' "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" --retire \
+  </dev/null >"$W/last" 2>&1 || rc=$?
+if [ "$rc" = 1 ] && alive && grep -q 'must be 32 hex digits' "$W/last" && ! grep -qF 'hunter2' "$W/last"; then
+  ok "17 malformed proof refused, value not echoed back" "rc=1"
+else bad "17 malformed proof refused, value not echoed back" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+
+# 18: the prompt path must actually destroy the identity, or the fix is only a message.
+mint
+timeout 60 env NONCE="$K1" "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" </dev/null >/dev/null 2>&1
+rc=0; printf '%s\n' "$K1" | timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" --retire \
+  >"$W/last" 2>&1 || rc=$?
+if [ "$rc" = 0 ] && ! alive && [ ! -e "$W/chal/offhost-challenge.seal" ]; then
+  ok "18 the prompt supplies the proof and retires for real" "rc=0, all gone"
+else bad "18 the prompt supplies the proof and retires for real" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+
+# 19: after a full cycle nothing on this host may hold the nonce in cleartext.
+if grep -rqF "$K1" "$W" 2>/dev/null; then
+  bad "19 no plaintext nonce left anywhere in the work area" "found"
+else ok "19 no plaintext nonce left anywhere in the work area" ""; fi
+
 echo "---"
 echo "retire-gate self-test: $pass passed, $fail failed"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail retire-gate violation(s)"; exit 1; fi
-if [ "$pass" -lt 15 ]; then
-  echo "UNEVALUATED — only $pass of 15 cases ran; not a pass"; exit 2
+if [ "$pass" -lt 19 ]; then
+  echo "UNEVALUATED — only $pass of 19 cases ran; not a pass"; exit 2
 fi
 echo "PASSED — $pass retire-gate tests, 0 failures."
 exit 0

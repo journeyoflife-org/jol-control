@@ -353,7 +353,7 @@ Measured on this host, 2026-10-27:
 |---|---|---|---|
 | `/opt/jol/repos/jol-control/terraform.tfstate` | `nvme0n1p8` | NVMe SSD | — (this is the reference) |
 | `/opt/jol/backup/tfstate/*.age` | `nvme0n1p6` | **the same NVMe** | **yes** — one die held the inventory and every copy of it |
-| `/media/jol/32f7e56a-…/jol-control` | `sdb1` | Seagate **ST9320423AS**, 298 G, SATA, **rotational** (`ROTA=1`) | **no — a different disk, same chassis** |
+| `/mnt/jol-backup/jol-control` | `sdb1` | Seagate **ST9320423AS**, 298 G, SATA, **rotational** (`ROTA=1`) | **no — a different disk, same chassis** |
 
 So `sdb1` closes the measured gap, and `backup_state.sh` now *verifies* it rather than trusting the
 operator: it resolves the block device under both paths (`findmnt --target` → `lsblk -no PKNAME`) and
@@ -385,7 +385,7 @@ different block device.
    genuinely a different device before treating a failure as something else — the script enforces the
    second point, but the first is what the operator sees first:
    ```bash
-   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
+   D=/mnt/jol-backup/jol-control
    ls -ld "$D" 2>&1 || udisksctl mount -b /dev/sdb1
    lsblk -no PKNAME "$(findmnt -no SOURCE --target "$D")"   # expect sdb, not nvme0n1
    ```
@@ -411,7 +411,7 @@ different block device.
    extracted from this fence, and case 19 of `tests/test_backup_gate.sh` fails if the two diverge. Run
    it directly, or through `make backup-state`:
    ```bash
-   make backup-state DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control \
+   make backup-state DEST=/mnt/jol-backup/jol-control \
                      RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj
    ```
    It is reproduced here because a runbook that only points at a file nobody can review is not
@@ -568,7 +568,7 @@ different block device.
    `cat "$DEST"/*.info` finds `DEST` empty unless you `export` it first. That exact mistake produced
    `cat: '/*.info': No such file or directory` in a real session:
    ```bash
-   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
+   DEST=/mnt/jol-backup/jol-control
    export DEST
    RECOVERY_PUB="$(cat ~/.config/age/offdisk-recipient.txt)" scripts/backup_state.sh
    ls -l "$DEST"; cat "$DEST"/*.info
@@ -591,23 +591,31 @@ different block device.
    # and a nonce recovered from that disk proves nothing about a second copy. The gate refuses both
    # cases - same disk, and device unresolvable - because this deletes something unrecoverable.
    make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
-                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
+                   CHALLENGE_DIR=/mnt/jol-backup/jol-control
    ```
-   Phase 1 writes a challenge encrypted to that recipient, prints the nonce, and stores the expected
-   answer **only as a hash**, so no local file can hand you the answer; nothing is destroyed. It also
+   Phase 1 writes a challenge encrypted to that recipient, prints only its **fingerprint**, and stores the
+   expected answer **only as a hash**, so no local file and no terminal output can hand you the answer;
+   nothing is destroyed. It also
    prints the separation it relied on (`identity on nvme0n1, challenge on sdb`) — read that line, it is
-   the whole basis of the proof. Then carry the challenge to wherever the other copy lives, decrypt it
-   there, and substitute the **actual value** for `<that-nonce>` — pasting the angle-bracket placeholder
-   literally produced `bash: syntax error near unexpected token 'newline'` in a real run:
+   the whole basis of the proof. **Phase 1 does not print the nonce** — only its SHA-256 fingerprint, on
+   purpose: an earlier revision printed the value three times, once inside a ready-to-run command line,
+   so the "proof that a copy exists elsewhere" was obtainable from the machine the proof is meant to
+   exclude (finding **S2-021**; for this command the consequence is a destroyed key, not a weak record).
+   Carry the challenge file to wherever the other copy lives, decrypt it there, and bring the value back.
+   Then, on this host, with nothing to substitute:
    ```bash
    make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
-                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control \
-                   PROOF=<the nonce printed on the other machine>
+                   CHALLENGE_DIR=/mnt/jol-backup/jol-control RETIRE=1
    ```
-   `tests/test_retire_gate.sh` holds 15 cases: the proof is required, refusals leave the identity in
-   place, the nonce is not recoverable from anything on this host, a stale nonce cannot retire a new
-   identity, and the two separation refusals below. Two mutations — a vacuous proof comparison, and
-   removing the proof check — each make the suite fail.
+   It prompts and hides the typing. The `<date>` in that path is the one thing only you know — your
+   identity file's name — and a filename cannot be prompted into existence; pasting the placeholder
+   itself was caught by a real run (`bash: syntax error near unexpected token 'newline'`) and cases 16
+   and 17 now refuse placeholder-shaped proofs by name.
+   `tests/test_retire_gate.sh` holds 20 cases: the proof is required, refusals leave the identity in
+   place, the nonce is not recoverable from anything on this host (including stdout and the printed
+   command line), a stale nonce cannot retire a new identity, the prompt path really destroys, and the
+   two separation refusals below. Mutations — a vacuous proof comparison, removing the proof check,
+   printing the nonce in phase 1 — each make the suite fail.
 
    > **Do not run this ceremony to feel safe about a copy that is merely on another disk in the same
    > box.** See S2-014: with the only other copy sitting on `sdb` next to the ciphertext, retiring the
@@ -717,7 +725,7 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 52 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 56 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
@@ -727,7 +735,7 @@ need neither `age` nor a real state and therefore run in CI (re-measured after t
 22 skipped, exit 0**); the 22 skipped cases additionally need `age` **and** a real `terraform.tfstate`,
 which a runner cannot have (state is gitignored), so they report `SKIPPED` and are announced rather than
 counted as passes.
-Locally: **52 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
+Locally: **56 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
 rules, 51 the default destination, 52 the challenge-token secrecy).
 
 > **CI census, measured 2026-10-27 in a runner-shaped run** (the `age` probe forced off and
@@ -804,7 +812,7 @@ not just a backup you hope is right.
    directory simply is not there. Concluding "the backups are gone" from an unmounted path is how a
    perfectly recoverable inventory gets rebuilt by hand.
    ```bash
-   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
+   D=/mnt/jol-backup/jol-control
    ls -la /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age
    if [ -d "$D" ]; then
      ls -la "$D"/jol-control-terraform.tfstate.*.age
@@ -827,7 +835,7 @@ not just a backup you hope is right.
    ```bash
    W=$(mktemp -d); chmod 700 "$W"; umask 077
    for f in /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age \
-            /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control/jol-control-terraform.tfstate.*.age; do
+            /mnt/jol-backup/jol-control/jol-control-terraform.tfstate.*.age; do
      [ -f "$f" ] || continue
      age -d -i ~/.config/age/state-backup-key.txt "$f" > "$W/out.json" 2>/dev/null || continue
      echo "$(basename "$f")  bytes=$(stat -c%s "$W/out.json")  md5=$(md5sum "$W/out.json" | cut -d' ' -f1)"
@@ -1067,13 +1075,28 @@ And the deeper flaw: decrypting the snapshot on another machine proves that mach
 nothing about custody that a local check cannot verify — so the round trip now carries a **proof token**.
 
 ```bash
-make backup-pack                       # on this host; prints the packet location and the carry steps
-# carry the WHOLE directory - nothing else comes back
-cd <where you put it>
-bash offhost_rehearsal.sh verify       # on the OTHER machine; it locates itself, edits no paths
-make backup-attest TOKEN=<what verify prints>     # back here
-make backup-status                                # 0 only if the attestation is fresh
+make backup-pack          # here. Prints the packet path and writes HOWTO.txt inside it.
+# carry the whole directory to the other machine, put it anywhere, cd INTO it, and run:
+#   sha256sum -c MANIFEST.sha256
+#   bash offhost_rehearsal.sh verify
+# it prints one 32-hex number. Back here, with NO argument to edit:
+make backup-attest        # prompts, input hidden
+make backup-status        # 0 only while the attestation is fresh (< 30 days)
 ```
+
+There is deliberately nothing to substitute in those lines. Five instructions in this project during one
+day broke because an angle-bracket stand-in was typed into a shell literally — `PROOF=<that-nonce>`
+(syntax error), `CHALLENGE_DIR=/tmp` (wrong disk, in the step about disks), a `backup.sh` that had never
+existed (`RC=127`), an `age` command with misordered flags, and `make backup-attest TOKEN=<the 32 hex it
+prints>` (`bash: syntax error near unexpected token 'newline'`, typed by the operator **after** this
+runbook had been rewritten to remove placeholders). A step that must be edited before it can run is a
+defect, so `attest` now takes the token from a hidden prompt, rejects anything shaped like a placeholder
+by name, and validates the 32-hex form before touching the pending record (cases 53–55).
+
+**Do not run `verify` on this machine to try it out.** It prints the token here, and a token that has
+reached this terminal, its scrollback, or an agent transcript is no longer evidence that a key exists
+somewhere else — which is the only thing this rehearsal buys. The safe local pre-flight is the manifest,
+which touches no secret: `cd ~/.config/age/offhost-packet && sha256sum -c MANIFEST.sha256`.
 
 `pack` encrypts a fresh 16-byte nonce to the off-device recipient and stores only its **hash** in
 `~/.config/age/offhost-attestation.pending`. `verify` must recover that nonce by decrypting with the
@@ -1092,9 +1115,9 @@ to live:
 find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
 
-**Committed harness — 52 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+**Committed harness — 56 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
 refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
-Locally: **52 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
+Locally: **56 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
 pins the default destination; 52 proves `pack` never prints the challenge token, finding S2-019).
 
 **Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;

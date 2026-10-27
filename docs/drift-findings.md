@@ -42,6 +42,7 @@ documents cite them. In numeric order:
 | S2-018 | A second project began writing its own snapshots into this backup's destination and satisfied the freshness gate with them | closed; name, clock and lineage all now checked, 5 cases added |
 | S2-019 | The custody challenge printed its own secret to stdout, so the transcript could attest without the key | closed same session; fingerprint only now, case 52 |
 | S2-020 | The backup suite depended on a file no CI runner has, so the merge commit would have gone red on four cases | closed; SRC is an input now, runner-shaped census measured 30/22 |
+| S2-021 | `retire_recovery_key.sh` printed the proof-of-custody nonce three times, including in a runnable command line | closed; fingerprint + hidden prompt, retire suite 15 → 20 cases |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -537,6 +538,14 @@ them, and neither changed the enforcement state of anything.
     cleanup. The rule it implies: every command line shipped to an operator must be executed verbatim in
     this session first, and any clause whose purpose cannot be stated in one sentence is a clause that
     should not be in the line at all.
+23. **The same placeholder failure recurred after being documented twice, because the fix was prose
+    instead of an interface.** `PROOF=<that-nonce>` broke a real run in October; measurement trap 17
+    recorded that "the defects that reached a human were all in prose"; RB-09 gained a paragraph telling
+    the operator not to paste angle brackets. Then `make backup-attest TOKEN=<the 32 hex it prints>`
+    produced `bash: syntax error near unexpected token 'newline'` in front of me, in the very reply that
+    claimed to have removed placeholders. Telling a human to edit a command is not a fix; the fix is a
+    command that needs no editing. Both flows now prompt for the secret with the input hidden, reject
+    values shaped like the placeholder text, and validate the 32-hex form before comparing anything.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -2129,6 +2138,44 @@ casual act on this host — it is the file that has been destroyed once here by 
 
 **Files affected:** `scripts/backup_state.sh`, `scripts/state_backup_guard.sh`,
 `tests/test_backup_gate.sh`, `.github/workflows/apply.yml`, `docs/runbooks.md` RB-08.
+
+### S2-021: the destruction gate printed the secret that was supposed to justify it
+
+**Discovered:** 2026-10-27, while grepping for leftover placeholders after fixing S2-019  
+**Status:** CLOSED. Phase 1 prints a fingerprint only; phase 2 prompts with hidden input. Retire suite  
+15 → 20 cases; every one of the four new assertions was mutation-checked.  
+**Severity:** S1-shaped. The action is `shred` of the only key that opens the off-device backups.
+
+`retire_recovery_key.sh` phase 1 printed the nonce three times — `nonce given : $NONCE`, `it must print
+exactly: $NONCE`, and a ready-to-run line `RETIRE_PROOF=$NONCE scripts/retire_recovery_key.sh …`, which
+copies straight into a shell and therefore into **shell history** as well as scrollback and transcripts.
+The seal beside it correctly held only a hash, and the comment above that line explained why a plaintext
+nonce must never sit next to the identity. The value was printed anyway, one screen further down.
+
+Consequence: the entire gate — "destroy this identity only once a copy elsewhere proves it can open the
+challenge" — could be satisfied by reading this machine's own terminal output and pasting the number. An
+operator with one copy and no off-host whatsoever could complete the ceremony successfully, destroy that
+copy's identity, and hold a receipt. Note the asymmetry with S2-019: there a bypassed check wrote a weak
+record; here it deletes a key. The backups become unreadable at the moment of maximum need, which is
+exactly the S2-013 incident this script was built to prevent.
+
+**Fixes.** Nonce never reaches stdout: phase 1 prints `nonce : fingerprint <16 hex>… (value not
+printed)`, and the carried-forward instructions no longer quote the expected value. `NONCE` is
+overridable so the suite can inject a known constant — otherwise "absent from stdout" cannot be asserted
+at all, because grepping a random value passes whether or not it was printed (the vacuous-negative shape
+recorded in trap 19). Phase 2 prompts with `read -r -s`, refuses placeholder shapes by name, and requires
+32 hex before comparison; no proof value is ever echoed back.
+
+**New cases, each mutation-checked.** 2 asserts the fingerprint is present and the known nonce absent;
+2b asserts no `RETIRE_PROOF=<known>` command line is printed; 4 was rewritten because it had been passing
+on the *shape* rejection rather than the comparison it names — it now supplies a well-formed wrong nonce
+and requires the words `does not match the challenge`; 16 placeholder refused by name; 17 malformed
+refused without echoing the value; 18 the prompt path genuinely destroys (a message-only fix would not);
+19 no plaintext nonce anywhere in the work area after a full cycle. Restored byte-identically after each
+mutation (`md5sum`).
+
+**Files affected:** `scripts/retire_recovery_key.sh`, `Makefile` (`RETIRE=1`), `tests/test_retire_gate.sh`
+(15 → 20), `docs/runbooks.md` RB-08 step 4, `AGENTS.md` §3, `.github/workflows/apply.yml`.
 
 ---
 
