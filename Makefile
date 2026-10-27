@@ -2,7 +2,7 @@
 # JOL Control Plane — Makefile
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test clean init list-repos count-repos
+.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test backup-state clean init list-repos count-repos
 
 .DEFAULT_GOAL := help
 
@@ -18,11 +18,24 @@ validate: ## Validate all repo YAML definitions
 compliance: ## Run full compliance check
 	python3 scripts/compliance_check.py
 
-test: ## Run gate self-tests (plan gate + state gate + drift gate + agents-table gate, no pytest required)
+test: ## Run gate self-tests (plan + state + drift + agents-table + backup gates, no pytest required)
 	python3 tests/test_plan_gate.py
 	bash tests/test_state_gate.sh
 	python3 tests/test_drift_gate.py
 	python3 tests/test_agents_gate.py
+	bash tests/test_backup_gate.sh
+
+# RB-08. Exists because the runbook told an operator to run `backup.sh`, a file that was never
+# created: prose in a fenced block is not an artefact. The script is scripts/backup_state.sh and
+# its test is tests/test_backup_gate.sh; this target only supplies the arguments.
+backup-state: ## Back up terraform.tfstate off-device per runbooks.md RB-08 (needs DEST= and a recovery recipient)
+	@test -n "$(DEST)" || { \
+		echo "usage: make backup-state DEST=/media/<other-disk>/jol-state-backup RECOVERY_PUB=age1..."; \
+		echo "   or, to also prove the second custody path while both identities are on this host:"; \
+		echo "       make backup-state DEST=... RECOVERY_KEY=~/.config/age/<recovery-identity-file>"; \
+		echo "DEST must be on a DIFFERENT block device than terraform.tfstate (see RB-08's device table)."; \
+		exit 1; }
+	DEST='$(DEST)' RECOVERY_PUB='$(RECOVERY_PUB)' RECOVERY_KEY='$(RECOVERY_KEY)' bash scripts/backup_state.sh
 
 agents-gate: ## STOP gate — is AGENTS.md section 2 still a well-formed table with evidence per row
 	python3 scripts/validate_agents_table.py AGENTS.md

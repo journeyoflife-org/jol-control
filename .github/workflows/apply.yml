@@ -95,6 +95,16 @@ jobs:
         # missing section. Offline, so it cannot be skipped into silence.
         run: python3 tests/test_agents_gate.py
 
+      - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
+        # 18 cases over scripts/backup_state.sh: 0 proven / 1 refused / 2 cannot-check. The nine
+        # guard cases need only jq and run here; the nine crypto cases need age AND a real
+        # terraform.tfstate, which this runner cannot have (state is gitignored), so they report
+        # SKIPPED and the suite still exits 0 — a skipped case is announced, never counted as a pass.
+        # The script's own reason for existing: an earlier revision wrote plaintext state at the
+        # ambient umask and left it on disk on every failure path, and a refused same-second re-run
+        # deleted the original backup. Both are pinned by cases 14-17, which mutation-test to fail.
+        run: bash tests/test_backup_gate.sh
+
       - name: Record why no plan or apply runs in CI
         run: |
           {

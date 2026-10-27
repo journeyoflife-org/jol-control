@@ -42,6 +42,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was invisible to the recovery procedure written the same day. The sidecar also finally supplies the
   "checksum of the state you expect" that Restore's own prerequisite demands and that previously existed
   only on a terminal scrollback
+- `scripts/backup_state.sh` — the RB-08 create-backup script **as a committed artefact**, not as prose
+  inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
+  that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
+  identity is now *enforced*, not asserted in a document
+- `tests/test_backup_gate.sh` — 20 self-tests for that script with the repository's three exit codes
+  (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
+  source, wiped state, absent destination, destination inside the repository, missing recovery input,
+  unreachable gate) and the crypto paths (same-key refusal in both modes, recipient-only `NOT VERIFIED`,
+  same-second collision, artefact permissions, sidecar contents, plaintext survival). Twelve cases need
+  neither `age` nor a real state so they run in CI; eight report `SKIPPED` there and are announced, never
+  counted as passes. **Every fixed defect was re-introduced into a throwaway copy and confirmed to make
+  a named case fail** — eight mutations, eight detections. `make test` runs all five suites and
+  `apply.yml`'s `Dev — Validate` runs this one so it cannot go inert the way a gate once did
+- `make backup-state` — supplies the arguments to the script, with a usage line naming both custody
+  modes and the requirement that `DEST` sit on a different block device
+- Measurement traps 14 and 15 in `docs/drift-findings.md`. **14:** a heredoc and `</dev/null` on the
+  same command silently disable the heredoc — the later stdin redirect wins, so `python3 -` read its
+  *program* from `/dev/null`, ran nothing and exited 0; the check that looked like a byte-identity
+  assertion was an empty program. **15:** its repair introduced the mirror image — a stray `s==="```"`
+  made the body a Python `SyntaxError`, so the case exited 1 and blamed *drift* for a typo, and every
+  mutation appeared to be detected because the case always fired. A test that always fails is as useless
+  as one that always passes, and reads more convincing; a **green baseline is a precondition** for
+  trusting any red mutation
 - `scripts/state_gate.py` — STOP gate that refuses `terraform apply` when the state in
   front of the config cannot account for what the config would create: 0-byte state file
   (Terraform writes state atomically and never produces one on its own), state that
@@ -158,6 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
+- `AGENTS.md` §3: `make test` is documented as **five** gate suites with the expected counts, and
+  `make backup-state` gains its own row stating that **exit 2 is not green**
 - `.github/workflows/plan.yml`: the `Destroy / Replace Gate` step is now armed only on positive
   evidence of a reachable inventory — a non-empty `terraform.tfstate` or a declared `backend` block —
   and otherwise emits a `::notice::` that the verdict is UNEVALUATED in CI. It previously ran

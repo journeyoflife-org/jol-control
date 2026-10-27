@@ -48,7 +48,8 @@ this organization is complete until S1-007 is closed.
 |---|---|---|
 | `make help` | List targets | |
 | `make validate` | Validate 40 repo YAML definitions | Expected: `PASSED — 40 repo definitions validated successfully.` |
-| `make test` | Self-tests for all four gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 23 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate` |
+| `make test` | Self-tests for all five gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 23 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate`, `PASSED — 20 backup-gate` |
+| `make backup-state DEST=<dir on another disk> RECOVERY_PUB=age1…` | Encrypt `terraform.tfstate` off-device per `docs/runbooks.md` RB-08 | 0 both custody paths proven / 1 refused, nothing written / 2 written but a control unchecked — **2 is not green**. `DEST` must be outside this repository and on a different block device than the state |
 | `make state-gate` | STOP gate: does the state on disk account for the config? | 0 safe / 1 refused / 2 cannot-check |
 | `make agents-gate` | STOP gate: is section 2 below still a well-formed table with evidence per row? | 0 pass / 1 violation / 2 cannot-check. Runs in `apply.yml`'s `Dev — Validate` on every push to `main` (`AGENTS.md` was added to that workflow's `paths:` filter for exactly this reason) and in `compliance-scan.yml` on pull requests and the weekly schedule |
 | `make compliance` | Full compliance posture check | Writes `compliance-report.json` |

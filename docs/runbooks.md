@@ -385,9 +385,17 @@ different block device.
    Then **move the identity file off this machine.** The script below can prove the two recipient
    strings differ; it cannot prove one of the keys is physically elsewhere. That is a human step, and
    skipping it makes the whole exercise decorative.
-2. Back up with the script below. It is written to **refuse rather than guess**, to leave no
-   plaintext behind even when it fails, and to name its artefact the way the Restore half below
-   already looks for. Save it, or run it inline:
+2. Back up with **`scripts/backup_state.sh`**, which is the block below verbatim — the file is
+   extracted from this fence, and `tests/test_backup_gate.sh` fails if the two diverge. Run it
+   directly, or through `make backup-state`:
+   ```bash
+   make backup-state DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
+                     RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj
+   ```
+   It is reproduced here because a runbook that only points at a file nobody can review is not
+   evidence. Note the failure this document once caused: it told an operator to run `backup.sh`,
+   **a file that had never been created**, and they got `RC=127`. Prose inside a fenced block is not
+   an artefact.
    ```bash
    #!/usr/bin/env bash
    # RB-08 create-backup. Exit codes follow this repository's gate convention:
@@ -407,6 +415,7 @@ different block device.
    # a temp file holding decrypted state. It also drops the artefact unless the run fully succeeded,
    # so a rejected backup cannot sit on the backup disk looking like a snapshot - but ONLY a file
    # this run created. Without CREATED, a refused same-second re-run deleted the ORIGINAL backup.
+   # shellcheck disable=SC2317  # invoked indirectly via `trap cleanup EXIT`; shellcheck cannot follow it
    cleanup(){ local p; for p in "${TMP[@]:-}"; do if [ -n "$p" ]; then rm -f "$p"; fi; done
               if [ "$KEEP" != 1 ] && [ "$CREATED" = 1 ]; then rm -f "${OUT:-}" "${OUT:-}.info"; fi; }
    trap cleanup EXIT
@@ -422,7 +431,14 @@ different block device.
           and (.serial|type=="number") and ((.resources|length) > 0)' "$SRC" >/dev/null 2>&1 || {
      echo "FAIL: $SRC is not a populated Terraform state document.";
      echo "      Needs terraform_version, lineage, a numeric serial and at least one resource."; exit 1; }
-   [ -d "$DEST" ] && [ -w "$DEST" ] || { echo "FAIL: DEST absent or not writable: $DEST"; exit 1; }
+   if [ ! -d "$DEST" ] || [ ! -w "$DEST" ]; then
+     echo "FAIL: DEST absent or not writable: $DEST"; exit 1; fi
+   # Confirmed BEFORE any encryption: a run that cannot reach the inventory check must not write a
+   # backup it then has to disown. Order matters - verifying after the fact still leaves the operator
+   # holding a file whose status is unknown.
+   if [ ! -f "$REPO/scripts/state_gate.py" ]; then
+     echo "FAIL: $REPO/scripts/state_gate.py not found - the inventory check cannot run.";
+     echo "      Do not report this backup as verified."; exit 2; fi
    DEST_ABS="$(cd "$DEST" && pwd -P)"
    case "$DEST_ABS" in
      "$REPO"|"$REPO"/*) echo "FAIL: DEST is inside the repository ($DEST_ABS). Ciphertext - and on a"
@@ -476,9 +492,6 @@ different block device.
 
    DEC="$OUT.decoded"; TMP+=("$DEC")
    age --decrypt -i "$HOST_KEY" "$OUT" > "$DEC"
-   if [ ! -f "$REPO/scripts/state_gate.py" ]; then
-     echo "FAIL: $REPO/scripts/state_gate.py not found - the inventory check cannot run.";
-     echo "      Do not report this backup as verified."; exit 2; fi
    # The config directory is PINNED, not inherited. `state_gate.py` takes `dir` positionally with
    # default `.`, so calling it with only --state judges the backup against whatever directory the
    # operator happens to be standing in - measured from /tmp it answered `SAFE` over ZERO resource
@@ -502,11 +515,16 @@ different block device.
    echo "OK: backup written and readable; recovery path status stated above (exit 2 = not verified)"
    exit "$RC"
    ```
-   Invoke it with the destination on the second disk. **Use the real filename, not the placeholder**
-   from step 1:
+   Or invoke it directly. **Use the real filename, not the placeholder** from step 1, and note that
+   `VAR=value command` scopes the variable **to that command only** — a following
+   `cat "$DEST"/*.info` finds `DEST` empty unless you `export` it first. That exact mistake produced
+   `cat: '/*.info': No such file or directory` in a real session:
    ```bash
-   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
-   RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj bash backup.sh
+   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+   export DEST
+   RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj \
+     scripts/backup_state.sh
+   ls -l "$DEST"; cat "$DEST"/*.info
    ```
    Pass `RECOVERY_KEY=<identity file>` instead of `RECOVERY_PUB` when you hold both identities on the
    host - at creation time, and on any restore rehearsal - to get the full two-`PASS` verification
@@ -559,12 +577,14 @@ and that each supplied identity reproduces the source md5. It does **not** and c
   keep. That is why the `.info` sidecar records `serial`/`lineage`/`instances` and why the Restore half
   requires a checksum of the state you **expect**, not merely a backup that opens.
 
-**Tested 2026-10-27 — 17 cases, against the script as published in this file.** The block is
-extracted **by content** (`RB-08 create-backup`), 1 match from the 19 bash fences here; an earlier
-attempt extracted *the first* fence after the heading, which is the key-minting snippet, so "every
-assertion passed" while testing three unrelated lines and the negative case exited 0. Each run is
-pinned to one filename by a stub `date` on `PATH`, and asserts on **four** things: exit code, the
-verdict line, the number of files left in the destination, and whether any plaintext survived.
+**Tested 2026-10-27 — first as an ad-hoc 17-case matrix, then as a committed 19-case suite.** The
+matrix is what found the earlier defects; it was run by extracting the block **by content** (`RB-08
+create-backup`), 1 match from the bash fences here — an earlier attempt extracted *the first* fence
+after the heading, which is the key-minting snippet, so "every assertion passed" while testing three
+unrelated lines and the negative case exited 0. Each run is pinned to one filename by a stub `date`
+on `PATH`, and asserts on **four** things: exit code, the verdict line, the number of files left in
+the destination, and whether any plaintext survived. That matrix is now superseded by
+`tests/test_backup_gate.sh`; the result table below describes it.
 
 | Result | Cases |
 |---|---|
@@ -591,9 +611,37 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**No test harness for this script is committed.** `tests/` holds the four gate suites only; the matrix
-above was run from a scratch directory and is not re-runnable from the repository. That is a real
-limitation of the claim in this paragraph, and the honest fix is a committed fixture-based suite.
+**Committed harness — 20 cases, all eight mutation probes detected.** `tests/test_backup_gate.sh`
+runs `scripts/backup_state.sh` against fixtures built from the shape of a real Terraform 1.16.1 state
+ document, in a temp directory that a trap removes. Case 19 extracts the fence above and requires it
+ to be **byte-identical** to the script, so this runbook cannot quietly drift from the code it
+ describes; case 20 asserts `umask 077` at source level, because the suite provably cannot detect its
+ removal behaviourally. Twelve cases need neither `age` nor a real state and therefore run in CI
+ (12 passed, 8 skipped, exit 0); the eight crypto cases additionally need `age` **and** a real
+ `terraform.tfstate`, which a runner cannot have (state is gitignored), so they report `SKIPPED` and
+ are announced rather than counted as passes. Locally: **20 passed, 0 failed**.
+
+The suite was falsified rather than trusted. Each defect that was fixed was reintroduced into a
+throwaway copy — never the working tree — and the run checked for a **named** case failing:
+
+| Mutation | Detected by | | Mutation | Detected by |
+|---|---|---|---|---|
+| append one newline to the script | 19 | | drop the `CREATED` guard from the trap | 14, 16 |
+| delete the "DEST inside repository" refusal | 4 | | gate-unreachable returns `0` not `2` | 9 |
+| remove `umask 077` | 20 | | recipient-only mode sets `RC=0` not `2` | 13 |
+| drop the `resources > 0` requirement | 7 | | edit the fence in the document | 19 |
+
+**How this harness itself was found to be broken twice, which is the reason to run mutations at all.**
+First version of case 19 passed unconditionally: the command carried both a heredoc and `</dev/null`,
+and the later stdin redirect wins, so `python3 -` read its *program* from `/dev/null`, executed
+nothing, and exited 0 — a check that reports pass forever. The fix introduced the mirror image: the
+body read `s==="```"`, a Python `SyntaxError`, so the case exited 1 and blamed **drift** for a typo,
+which is how a suite gains a permanently-red check that looks like a real finding. Only the unmutated
+baseline going red exposed it, and case 19 now separates "the checker errored" from "the files
+differ". A test that always fails is as useless as one that always passes, and reads more convincing.
+
+`make test` runs all five suites and `apply.yml`'s `Dev — Validate` runs this one, so neither can go
+inert silently.
 
 ### Restoring
 

@@ -447,6 +447,26 @@ them, and neither changed the enforcement state of anything.
       Assertions must be independent of execution order.
     The general form: when a check fails **immediately and uniformly**, suspect the harness before the
     artifact, and prove the harness by feeding it an input whose correct answer you already know.
+14. **A heredoc and a `</dev/null` on the same command silently disable the heredoc.** Redirects are
+    applied left to right, so the later stdin redirect wins: `python3 - a b <<'PY' </dev/null` reads
+    its **program** from `/dev/null`, executes nothing, and exits **0**. The check built on this looked
+    like a passing byte-identity assertion for several runs; it was an empty program. The reflex that
+    caused it was correct in isolation — always redirect stdin when a command might block on it (trap
+    13) — applied to the one command that *uses* stdin as its source of code.
+15. **A test that always FAILS is as useless as one that always passes, and it reads more convincing.**
+    Correcting trap 14 left the same case body containing `s==="```"` — three equals signs, a Python
+    `SyntaxError`. The case exited 1 and was reported as *"the runbook has drifted from the script"*.
+    It then appeared to work: every mutation I tried was "detected" by it, because it detected nothing
+    and always fired. Three separate pieces of evidence were false-positive before this was seen:
+    - the **unmutated baseline also went red** — the first signal, and the one nearly dismissed as
+      leftover state from a previous command;
+    - the file and the fence compared **equal** when the same code was run by hand;
+    - the mutation harness quoted `"...$c/..."` in **double quotes**, so `$c` expanded in the caller to
+      a directory already deleted, and eight "detected" mutations were really eight copies that were
+      never touched.
+    The fix is structural, not textual: case 19 now distinguishes `SyntaxError`/`Traceback` from a real
+    difference and prints which one it found, and a **green baseline is a precondition** for trusting
+    any red mutation.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1522,8 +1542,9 @@ paths from an inherited working directory. This session also hit the mirror-imag
 to be read-only that is not.
 
 **Six further defects found while building the follow-up backup procedure, all in commands this
-session wrote, all caught by executing rather than by reading — and then **four more that execution
-did not catch**, found only when an independent review read the failure paths the tests never entered:**
+session wrote, all caught by executing rather than by reading — and then **five more that execution
+did not catch**, found by an independent review that read the failure paths the tests never entered,
+or by following the runbook as an operator would:**
 
 1. **`/secure/offhost` was invented.** A destination directory was named in a command without ever
    checking it existed. The real separate disk on this host is `sdb1`, mounted at
@@ -1592,11 +1613,24 @@ A pasted three-line `sudo` block also ran only its first line: the directory was
 `root:root 755` and unwritable, which `stat` caught and the transcript did not. Every effect of a
 multi-line privileged command must be verified independently.
 
-**Files affected:** `Makefile` (warning corrected), `docs/runbooks.md` (RB-08: restore procedure, then
-expanded to cover creating a backup, including a verifier whose plaintext-leak and vacuous-pass paths
-were found only under independent review), `docs/drift-findings.md`, `docs/SECRETS_INVENTORY.md` (new
-row **AGE-2** plus the 1-of-2 recipient semantics); `terraform.tfstate` restored byte-exact, no net
-change
+**Files affected:** `Makefile` (warning corrected; `test` gained a fifth suite and a `backup-state`
+ target added), `docs/runbooks.md` (RB-08: restore procedure, then expanded to cover creating a
+ backup, then the create-side script promoted out of the fence into `scripts/backup_state.sh` with
+ `tests/test_backup_gate.sh`), `scripts/backup_state.sh`, `tests/test_backup_gate.sh`,
+ `.github/workflows/apply.yml` (Backup Gate Self-Test), `AGENTS.md` §3, `docs/drift-findings.md`,
+ `docs/SECRETS_INVENTORY.md` (new row **AGE-2** plus the 1-of-2 recipient semantics);
+ `terraform.tfstate` restored byte-exact, no net change
+
+**Follow-up 11 — the runbook was not runnable, twice.** After the review landed, the document told the
+operator to run `backup.sh`. **No such file had ever been created**: the script existed only as a
+fenced block, and "copy it out of RB-08" is not an instruction an operator can execute. The attempt
+returned `RC=127`, and the line after it failed too because `VAR=value command` scopes the variable to
+that command alone, so `cat "$DEST"/*.info` expanded to `/*.info`. Both were defects in prose this
+session wrote, found only when someone followed it. The remedy is not better wording: the script is now
+a committed artefact (`scripts/backup_state.sh`, proven byte-identical to the fence), the test
+(`tests/test_backup_gate.sh`) enforces that identity so the document cannot drift from the code it
+describes, `make backup-state` supplies the arguments, and `apply.yml` runs the suite. A runbook that
+carries code in a fence has two copies of the code and zero guarantees about which one is true.
 
 ---
 
