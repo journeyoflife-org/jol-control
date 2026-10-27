@@ -2,7 +2,7 @@
 # JOL Control Plane — Makefile
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: help validate plan plan-gate state-gate apply fmt lint drift compliance test clean init list-repos count-repos
+.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test clean init list-repos count-repos
 
 .DEFAULT_GOAL := help
 
@@ -31,10 +31,17 @@ agents-gate: ## STOP gate — is AGENTS.md section 2 still a well-formed table w
 init: ## Initialize Terraform
 	terraform init -input=false
 
-fmt: ## Format Terraform files
+fmt: ## Format Terraform files (MUTATES the working tree — never a verification step)
 	terraform fmt -recursive
 
-lint: fmt validate ## Run all linting (terraform fmt + YAML validation)
+fmt-check: ## STOP gate — verify Terraform formatting WITHOUT modifying anything
+	terraform fmt -check -recursive
+
+# `lint` must not write. It used to depend on `fmt`, which rewrites files in place, so
+# running the documented verification command silently edited repositories.tf inside a
+# lifecycle block holding prevent_destroy = true — an area AGENTS.md §4 gates behind
+# explicit human approval. Verification has to be side-effect free. See docs/drift-findings.md S2-008.
+lint: fmt-check validate ## Run all linting (non-mutating: terraform fmt -check + YAML validation)
 
 plan: validate ## Run terraform plan
 	terraform plan -input=false -out=tfplan

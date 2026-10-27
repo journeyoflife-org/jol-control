@@ -125,15 +125,34 @@ jobs:
   security-scan:
     name: "Repository Security Scan"
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        tier: [governance, platform, devops, site]
+    # This job used to carry `strategy.matrix.tier: [governance, platform, devops, site]`,
+    # and no step ever referenced `matrix.tier`. `actions/checkout` with no `repository:`
+    # checks out jol-control only, so the matrix ran the SAME grep four times against the
+    # SAME tree: four times the minutes, zero extra coverage, and a job name implying a
+    # fleet-wide scan it never performed. Removed rather than left decorative (S1-010).
+    # Fleet-wide secret scanning is recorded as a recommendation, not implemented here.
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Check for secrets patterns
+        # A scan that cannot fail is not a control. This step ended with
+        # `echo "::warning::..."`, so a matched credential produced a yellow annotation and
+        # a GREEN job: the secret was reported and nothing was blocked. It now exits 1.
+        # Verified before arming it: at 26132e8 all four patterns match ZERO tracked files.
+        # The only hit anywhere in the tree was one redacted password assignment inside
+        # .venv/pip — third-party code, gitignored, and absent from a CI checkout; the
+        # --exclude-dir list below makes a local reproduction agree with CI instead of
+        # diverging on that one file.
+        # EDITORS: this file is scanned by its own patterns. Writing an example credential
+        # shape into a comment here fails the build — verified, not theoretical: a comment
+        # quoting a password assignment was matched by pattern 4 during testing.
+        # Two failure modes are kept distinct, as in the drift job above: a MATCH fails the
+        # build, and a grep that could not RUN also fails it, because an unexecuted scan
+        # must never be reported as a clean one.
+        # Only file:line is printed. This repository is PUBLIC, so its Actions logs are
+        # publicly readable — echoing grep's match would publish the very secret being found.
         run: |
           echo "Scanning for common secret patterns..."
           PATTERNS=(
@@ -142,13 +161,41 @@ jobs:
             'sk-[a-zA-Z0-9]{20,}'
             'password\s*=\s*["\x27][^\s]+["\x27]'
           )
+          EXCLUDES=(--exclude-dir=.git --exclude-dir=.venv --exclude-dir=.terraform
+                    --exclude-dir=node_modules --exclude-dir=__pycache__
+                    --exclude=.secrets.baseline)
           FOUND=0
+          BROKEN=0
+          WORK=$(mktemp -d)
+          set +e
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rnE "$pattern" --include="*.py" --include="*.js" --include="*.ts" --include="*.tf" --include="*.yml" --include="*.yaml" . 2>/dev/null | grep -v ".secrets.baseline" | grep -v "node_modules"; then
-              echo "WARNING: Potential secret pattern found: $pattern"
-              FOUND=1
-            fi
+            # grep's status is captured directly. Piping inside $( ) would make $? the exit
+            # code of the LAST stage, not of grep, and a scan that found nothing would read
+            # as a scan that found something.
+            grep -rnE "$pattern" "${EXCLUDES[@]}" \
+                 --include="*.py" --include="*.js" --include="*.ts" --include="*.tf" \
+                 --include="*.yml" --include="*.yaml" . >"$WORK/hits" 2>"$WORK/err"
+            rc=$?
+            case "$rc" in
+              0) cut -d: -f1,2 <"$WORK/hits"      # file:line only, never the matched text
+                 echo "Potential secret pattern found: $pattern"
+                 FOUND=1 ;;
+              1) : ;;                             # no match — the clean case
+              *) echo "grep exited $rc on pattern '$pattern' — the scan did not complete"
+                 cat "$WORK/err"
+                 BROKEN=1 ;;
+            esac
           done
-          if [ "$FOUND" -eq 1 ]; then
-            echo "::warning::Potential secrets detected in code — review immediately"
+          set -e
+          rm -rf "$WORK"
+          if [ "$BROKEN" -eq 1 ]; then
+            echo "::error title=Secret scan could not run::grep failed on at least one pattern, so absence of findings cannot be concluded. An unexecuted scan is not a passing scan."
+            echo "Secret scan: UNEVALUATED — grep could not complete." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          if [ "$FOUND" -eq 1 ]; then
+            echo "::error title=Secret pattern detected::A credential-shaped string matched in a tracked file. Rotate it, purge it from history, and follow policy/compliance-gates.yml secret_scan.remediation."
+            echo "Secret scan: FAILED — potential secrets in tracked files." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Secret scan: PASSED — no credential-shaped strings in tracked files." >> "$GITHUB_STEP_SUMMARY"

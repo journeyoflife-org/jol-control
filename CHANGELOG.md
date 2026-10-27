@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `make fmt-check` — non-mutating Terraform formatting STOP gate (`terraform fmt -check
+  -recursive`; exit 0 clean / 3 unformatted). `make lint` now depends on it instead of on `fmt`,
+  so the documented verification command no longer rewrites files as a side effect
+- `tests/test_state_gate.sh` gained 7 assertions (16 → 23) and two helpers, `assert_note` /
+  `assert_no_note`, which assert on what the gate *reports* rather than only on its exit code.
+  The stale-copy NOTICE never changes the verdict, so exit-code-only assertions passed straight
+  over the defect they existed to catch
+- `scripts/state_gate.py` `stale_state_copies()` — a single helper both call sites now share, so
+  the remote-backend and local-state branches cannot drift apart on what counts as a stray copy
+- `docs/drift-findings.md` S1-010, S1-011, S2-007, S2-008, S2-009, S2-010 and S2-011, each with
+  the measurements behind it, and one hypothesis recorded as refuted rather than quietly dropped
 - `scripts/state_gate.py` — STOP gate that refuses `terraform apply` when the state in
   front of the config cannot account for what the config would create: 0-byte state file
   (Terraform writes state atomically and never produces one on its own), state that
@@ -124,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
+- `.github/workflows/compliance-scan.yml`: the `security-scan` job lost its decorative
+  `matrix.tier` — no step ever referenced it, and `actions/checkout` with no `repository:` checks
+  out this repository only, so run 40072669078 ran four identical jobs against one tree. The step
+  also gained the ability to fail: a match, **or** a grep that could not run, now emits `::error::`
+  and exits 1 where it previously emitted `::warning::` and stayed green. It prints `file:line`
+  only, never the matched text, because this repository is public and so are its Actions logs
+  (S1-010)
+- `Makefile`: `lint` is now `fmt-check validate`; `fmt` is retained but its help text says it
+  mutates the working tree
+- `AGENTS.md` §3: `make test` expected counts corrected (state-gate 16 → 23), and the combined
+  `make fmt` / `make lint` row split into three rows that state plainly which target writes
 - `.github/workflows/compliance-scan.yml`: the drift step binds `secrets.ORG_READ_TOKEN ||
   secrets.GITHUB_TOKEN` instead of the runner token alone, and its exit-2 annotation now points at
   RB-07 rather than telling the operator to create a credential that already exists. The fallback
@@ -184,6 +206,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S1-011** `scripts/state_gate.py`: `worst_state()` declared a parameter named `forced` while its
+  per-file listing referenced a module-global `root` that does not exist, so any directory holding
+  **more than one** state file raised `NameError` and the gate answered UNEVALUATED (exit 2).
+  Fail-safe, but blind exactly where duplicate inventories live, and the documented "verdict is the
+  WORST of them" rule was unreachable code — a healthy state beside a 0-byte one reported
+  UNEVALUATED instead of REFUSED. Pre-existing at HEAD, reproduced against
+  `git show HEAD:scripts/state_gate.py`; no fixture had ever held two state files
+- **S2-007** `scripts/state_gate.py`: stale-copy detection filtered on
+  `x.suffix in (".backup", ".bak")`, so `terraform.tfstate.backup_20260930_213529` was invisible —
+  the one copy on this host that actually diverges (serial 301, still holding
+  `github_team.security` after live state dropped it at serial 306). The NOTICE fired on the
+  near-identical copy and stayed silent about the one that could revert inventory. Now matched on
+  name, with directories and dotfiles excluded
+- **S2-008** `Makefile`: `lint` depended on `fmt`, i.e. `terraform fmt -recursive`, so running the
+  documented verification command silently rewrote `repositories.tf` inside a `lifecycle` block
+  holding `prevent_destroy = true` — an edit AGENTS.md §4 gates behind explicit in-session approval
+- **S2-009** `repositories.tf`: trailing-comment alignment in the `github_repository.repo`
+  `lifecycle` block, broken since `226fa5c`, made `terraform fmt -check -recursive` exit **3** at
+  HEAD. Whitespace only — `git diff -w --numstat` is empty and both `prevent_destroy` and
+  `ignore_changes` are byte-identical. No CI job enforces formatting, which is why it survived four
+  commits; adding one is recommended and still open
+- **S2-011** `docs/drift-findings.md`: the index omitted S1-009, so an index-only reader counted
+  eight S1 findings and missed the one stating that seven governance-tier repositories have branch
+  protection in state and none on GitHub
 - Six overstatements introduced by this session's own closure work, found by reviewing the diff
   rather than trusting the narrative, and corrected in `AGENTS.md`, `docs/drift-findings.md` and
   `docs/runbooks.md`:
