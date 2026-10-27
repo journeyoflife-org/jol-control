@@ -96,12 +96,12 @@ jobs:
         run: python3 tests/test_agents_gate.py
 
       - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
-        # 23 cases over scripts/backup_state.sh: 0 both custody paths proven / 1 refused /
-        # 2 written-but-unverified. Fifteen need only jq and run here; the eight crypto cases need
-        # age AND a real terraform.tfstate, which this runner cannot have (state is gitignored), so
-        # they report SKIPPED and the suite still exits 0 — a skipped case is announced, never counted
-        # as a pass. Case 19 also requires docs/runbooks.md's fence to be byte-identical to the
-        # script, so the runbook cannot drift from the code it documents.
+        # 32 cases over scripts/backup_state.sh and scripts/state_backup_guard.sh: 0 both custody paths
+        # proven / 1 refused / 2 written-but-unverified. Twenty-four need only jq and run here; the eight
+        # crypto cases need age AND a real terraform.tfstate, which this runner cannot have (state is
+        # gitignored), so they report SKIPPED and the suite still exits 0 — a skipped case is announced,
+        # never counted as a pass. Case 19 also requires docs/runbooks.md's fence to be byte-identical to
+        # the script, so the runbook cannot drift from the code it documents.
         # What the suite pins: an earlier revision wrote plaintext state at the ambient umask and left
         # it on disk on every failure path, a refused same-second re-run deleted the original backup,
         # and the sidecar claimed "off-host-verified" for a key that was never checked for location.
@@ -110,6 +110,23 @@ jobs:
         # execution is the merge commit. Keep the case count here in step with the suite — it has
         # already been left stale twice.
         run: bash tests/test_backup_gate.sh
+
+      - name: Retire Gate Self-Test (prove custody must be shown before destruction)
+        # 12 cases over scripts/retire_recovery_key.sh. The property is not "does it delete" but
+        # "can anything delete an identity WITHOUT proof", so every refusal case also asserts the
+        # identity is still on disk - a gate that destroys on failure is worse than no gate. Two
+        # mutations (vacuous proof comparison, proof check removed) each make the suite fail.
+        # Needs age + age-keygen. When those are absent the suite reports UNEVALUATED by exiting 2,
+        # and this step says so in a notice rather than absorbing the 2 with `|| [ $? = 2 ]` - that
+        # form would let a step whose tests never ran conclude success, which is the false green
+        # AGENTS.md section 6 exists to prevent.
+        run: |
+          if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
+            bash tests/test_retire_gate.sh
+          else
+            echo "::notice title=Retire gate UNEVALUATED::age is not installed on this runner, so the 12 retirement cases did not execute. Absence of a failure here is not a pass."
+            echo "Retire gate: **UNEVALUATED on this runner** (no age) - not a pass." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Record why no plan or apply runs in CI
         run: |

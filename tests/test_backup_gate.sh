@@ -291,17 +291,70 @@ else
   fail=$((fail+1)); echo "  FAIL  20 script no longer sets umask 077 - plaintext state would be group-writable"
 fi
 
+# ---------------------------------------------------------------------------
+# scripts/state_backup_guard.sh - the scheduled front door (runbooks.md RB-09).
+#
+# The property worth testing is that a timer cannot report success for a backup it was not allowed to
+# make: no recipient means UNEVALUATED (2), an unmounted destination means refusal (1) and nothing
+# written, and a snapshot young enough means the job does nothing at all. A `logger` shim keeps the
+# runs out of the real journal.
+# ---------------------------------------------------------------------------
+GUARD="$REPO/scripts/state_backup_guard.sh"
+if [ -f "$GUARD" ]; then
+  echo
+  echo "scheduled-refresh guard (needs jq only):"
+  mkdir -p "$W/nolog"; printf '#!/bin/sh\nexit 0\n' > "$W/nolog/logger"; chmod +x "$W/nolog/logger"
+  REC="$W/recipient.txt"; GD="$W/guarddest"
+  g() { # expect-rc label [VAR=..]...
+    local want="$1" label="$2"; shift 2; local rc
+    # Deliberately WITHOUT $W/bin: that directory holds a stub `date` for the backup cases, and putting
+    # it on the guard's PATH made `date +%s` non-numeric and crashed the arithmetic. Case 33 asserts
+    # that the same input now yields UNEVALUATED rather than a shell error.
+    timeout 120 env PATH="$W/nolog:/usr/bin:/bin" "$@" bash "$GUARD" </dev/null >"$W/go" 2>&1
+    rc=$?
+    if [ "$rc" = "$want" ]; then pass=$((pass+1)); printf '  ok    %-46s RC=%s\n' "$label" "$rc"
+    else fail=$((fail+1)); printf '  FAIL  %-46s RC=%s want=%s\n' "$label" "$rc" "$want"; sed -n '1,3p' "$W/go" | sed 's/^/          /'; fi
+  }
+  rm -f "$REC"
+  g 2 "24 no recipient file -> UNEVALUATED"      RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO"
+  printf 'not-a-recipient\n' > "$REC"
+  g 2 "25 malformed recipient -> UNEVALUATED"    RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO"
+  printf 'age1q4mqprrl67lxvwuwu3stq8y5yhe9ke3huzy5usenqjdvvc2r0ufq4a8scp\n' > "$REC"
+  g 1 "26 dest unmounted -> refuse"              RECIPIENT_FILE="$REC" DEST="$W/guardmissing" REPO="$REPO"
+  if [ -d "$W/guardmissing" ]; then fail=$((fail+1)); echo "      FAIL 27 the guard created the destination itself"
+  else pass=$((pass+1)); echo "  ok    27 guard did not create the destination"; fi
+  mkdir -p "$GD"; : > "$GD/jol-control-terraform.tfstate.20260101T000000Z.age"
+  g 0 "28 fresh snapshot -> nothing to do"       RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" MAX_AGE_H=24
+  if grep -q 'nothing to do' "$W/go"; then pass=$((pass+1)); echo "  ok    29 it names the no-op (silent success is not enough)"
+  else fail=$((fail+1)); echo "  FAIL  29 succeeded without saying why"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
+  # Stale snapshot: the guard must try, and the inner script's device check must stop it (this
+  # destination is a temp dir on the state's own disk), surfacing as a refusal not a pass.
+  g 1 "30 stale, dest on the state's disk -> refuse" RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" MAX_AGE_H=0
+  if [ "$(find "$GD" -type f | wc -l)" = 1 ]; then pass=$((pass+1)); echo "  ok    31 refused run left no artefact behind"
+  else fail=$((fail+1)); echo "  FAIL  31 artefacts left by a refused run: $(find "$GD" -type f | wc -l)"; fi
+  # A non-numeric clock must produce UNEVALUATED, not a bash arithmetic crash.
+  mkdir -p "$W/baddate"; printf '#!/bin/sh\necho 19700101T000000Z\n' > "$W/baddate/date"; chmod +x "$W/baddate/date"
+  set +e; timeout 120 env PATH="$W/nolog:$W/baddate:/usr/bin:/bin" RECIPIENT_FILE="$REC" DEST="$GD" \
+      REPO="$REPO" MAX_AGE_H=24 bash "$GUARD" </dev/null >"$W/go" 2>&1; brc=$?; set -e
+  if [ "$brc" = 2 ] && grep -q 'cannot compute snapshot age' "$W/go"; then
+    pass=$((pass+1)); printf '  ok    %-46s RC=2, named the cause\n' "32 broken date -> UNEVALUATED"
+  else fail=$((fail+1)); printf '  FAIL  %-46s RC=%s\n' "32 broken date -> UNEVALUATED" "$brc"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
+  rm -f "$REC"; find "$GD" -type f -delete 2>/dev/null; rmdir "$GD" 2>/dev/null
+else
+  skip=$((skip+9)); echo "  SKIP   scheduled-refresh guard absent ($GUARD) - 9 cases not evaluated"
+fi
+
 echo "---"
 echo "backup-gate self-test: $pass passed, $fail failed, $skip skipped"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail backup-gate violation(s)"; exit 1; fi
-if [ "$pass" -lt 15 ]; then
-  # 15 is the measured census of cases needing neither age nor a real state: 1-9 (guards), 18 (no
-  # artefact in the tree), 19 (fence identity), 20 (umask) and 21-23 (the device check). Measured,
-  # not assumed - a threshold under the true count turns a broken suite green, and a threshold over
-  # it makes every CI run red, which is the S1-012 failure mode again.
+if [ "$pass" -lt 24 ]; then
+  # 24 is the measured census of cases that run with `age` hidden and no real state: guards 1-9,
+  # device cases 21-23, repo/fence/umask 18-20, and the scheduled-refresh block 24-32. Measured from
+  # an actual hidden-age run, not guessed - a threshold under the true count turns a broken suite
+  # green, and one above it makes every CI run red, which is the S1-012 failure mode again.
   echo "UNEVALUATED — only $pass cases ran; the guard set is incomplete, this is not a pass"; exit 2
 fi
-if [ "$skip" -gt 0 ] && [ "$pass" -lt 15 ]; then
+if [ "$skip" -gt 0 ] && [ "$pass" -lt 24 ]; then
   echo "UNEVALUATED — $skip cases skipped and only $pass ran; not a pass"; exit 2
 fi
 echo "PASSED — $pass backup-gate tests, 0 failures$([ "$skip" -gt 0 ] && echo " ($skip crypto cases skipped)")."

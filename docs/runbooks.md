@@ -577,6 +577,28 @@ different block device.
    Pass `RECOVERY_KEY=<identity file>` instead of `RECOVERY_PUB` when you hold both identities on the
    host - at creation time, and on any restore rehearsal - to get the full two-`PASS` verification
    and exit 0.
+4. **Retiring an identity: proof before destruction.** Do not `shred` a recovery identity because a
+   runbook told you to. On 2026-10-27 one was destroyed with no off-host copy: the instruction to
+   "copy it, verify it there, then shred" was prose, the shred was a standalone command line, and it
+   ran first. The private half existed nowhere else on the host — five other age identities and two
+   session transcripts were each tested for the ability to open the backup and every one returned zero
+   bytes — so the snapshot became single-custody. Prose that says *verify first* is advice, and advice
+   is not a control.
+   ```bash
+   make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" CHALLENGE_DIR=/tmp
+   ```
+   Phase 1 writes a challenge encrypted to that recipient and prints a nonce it stores **only as a
+   hash**, so no local file can hand you the answer; nothing is destroyed. Carry the challenge to the
+   machine holding the other copy, decrypt it there, then re-run with `PROOF=<nonce>`. The refusal
+   paths leave the identity in place, a stale nonce cannot retire a new identity, and the challenge
+   cannot be written beside the identity it tests. `tests/test_retire_gate.sh` covers all twelve of
+   those properties, and the two mutations that would break them each make the suite fail.
+
+**Note on what this gate deliberately makes impossible.** Because `backup_state.sh` requires a
+recovery recipient that differs from the host key, and `retire_recovery_key.sh` will not let the last
+copy leave without off-host proof, there is no sequence that ends with a backup and zero second
+custody - the moment the only copy is gone, backups stop being accepted rather than silently
+degrading to one key. That refusal is the control; re-mint per step 1 and carry it off-host to resume.
 
 **Expected output:** `written … (≈195 KB)` with mode 600, a `recipients:` line, `PASS [host-key]`, then
 either `PASS [recovery-key]` or `NOT VERIFIED [recovery-key]`, then the pinned `state-gate` report
@@ -661,15 +683,16 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 23 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 32 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
-level, because the suite provably cannot detect its removal behaviourally. **Fifteen** cases need
-neither `age` nor a real state and therefore run in CI (15 passed, 8 skipped, exit 0); the eight crypto
-cases additionally need `age` **and** a real `terraform.tfstate`, which a runner cannot have (state is
-gitignored), so they report `SKIPPED` and are announced rather than counted as passes. Locally:
-**23 passed, 0 failed**.
+level, because the suite provably cannot detect its removal behaviourally. Cases 24–32 cover
+`scripts/state_backup_guard.sh`, the scheduled front door described in RB-09. **Twenty-four** cases
+need neither `age` nor a real state and therefore run in CI (24 passed, 8 skipped, exit 0); the eight
+crypto cases additionally need `age` **and** a real `terraform.tfstate`, which a runner cannot have
+(state is gitignored), so they report `SKIPPED` and are announced rather than counted as passes.
+Locally: **32 passed, 0 failed**.
 
 The suite was falsified rather than trusted. Nine defects that were fixed were each reintroduced into
 a **throwaway copy** — never the working tree — and every one is caught by a named behavioural case:
@@ -804,8 +827,83 @@ escalate** — do not restore a near-match, and do not re-create state by applyi
 **Rollback:** the copies from step 2 are the rollback. Nothing in this procedure writes outside
 `terraform.tfstate`, which is gitignored and therefore invisible to `git`.
 
-**Residual risk this runbook cannot fix:** the backups are **manual** (newest 2026-10-20 as of
-writing, i.e. 7 days stale) and live on the **same physical device** as the live state
-(`/dev/nvme0n1p6` vs `/dev/nvme0n1p8`, one NVMe). No cron and no systemd timer refreshes them, and
-no off-host copy exists. A single disk failure loses the inventory and its backups together, and
-`make drift` cannot rebuild it. Tracked as S2-012.
+**Residual risk this runbook cannot fix:** the refresh is **manual** — no cron entry and no systemd
+timer runs `scripts/backup_state.sh` today. The off-device snapshot lives on a second disk **inside the
+same machine**, on a mount a desktop session creates, and the second age identity is gone (see S2-013),
+so host-level loss still takes the inventory and every copy of it. `make drift` compares names and
+visibility, not attributes, so nothing here can rebuild the inventory. Scheduling and the boot mount
+are `RB-09`; tracked as S2-012.
+
+---
+
+## RB-09: Make the off-device state backup reachable at boot, and refresh it without a human
+
+RB-08 produced a snapshot on a second disk; this makes it **findable when the machine is not sitting
+at a desktop session** and **renewed when nobody remembers to**. Both steps change the host, not this
+repository, so they are written here to be reviewed and then executed by the operator.
+
+**Why it matters:** `/media/jol/32f7e56a-…` exists because `udisks2` mounted it for a GUI login.
+`/etc/fstab` carries **no** entry for it, so after a reboot without autologin — or a crash recovery,
+or an SSH-only session — the path is absent and RB-08's Restore step finds no candidates and could
+conclude the backups are gone.
+
+1. **Confirm the volume's identity, and that nothing else answers to it.** This host has **40 loop
+   devices mounted**, and it carries a recorded incident where a loop-mounted forensic image
+   re-animated an old filesystem UUID and hijacked a `by-uuid` fstab mount. Check before writing.
+   ```bash
+   lsblk -o NAME,SIZE,FSTYPE,ROTA,UUID,MOUNTPOINT /dev/sdb
+   readlink -f /dev/disk/by-uuid/32f7e56a-b96c-486a-93da-9e1a57567cfc   # must print /dev/sdb1
+   ls -l /dev/disk/by-uuid/ | grep -i loop                              # must print nothing
+   findmnt -no SOURCE,TARGET /dev/sdb1                                 # where it is mounted now
+   ```
+2. **Add the boot mount.** Recommended source is the **device path**, `/dev/sdb1`, not `by-uuid`,
+   precisely because of the hijack mode above: a kernel-assigned `sdX` name cannot be re-pointed at a
+   loop image, whereas a UUID symlink can. The trade-off is honest and stated: if a disk is added or
+   the controller enumerates differently, `sdb1` may move and this entry then fails — with `nofail`,
+   boot continues and the directory simply is not there, which step 1 and the guard below both catch
+   loudly rather than silently writing backups onto the root filesystem.
+   ```bash
+   sudo cp -a /etc/fstab "/etc/fstab.pre-rb09-$(date +%Y%m%dT%H%M%S)"
+   echo '/dev/sdb1  /mnt/jol-backup  ext4  defaults,nofail,noatime  0  2' | sudo tee -a /etc/fstab
+   sudo mkdir -p /mnt/jol-backup && sudo mount /mnt/jol-backup
+   findmnt -T /mnt/jol-backup -o SOURCE,TARGET,FSTYPE,OPTIONS            # SOURCE must be /dev/sdb1
+   ls -1 /mnt/jol-backup/jol-state-backup/                              # the existing snapshots are here
+   ```
+   `findmnt` showing the root device instead of `/dev/sdb1` means it did **not** mount; do not proceed.
+3. **Record the second recipient** so a scheduled run has something honest to encrypt to. The public
+   key is not secret, but keeping it out of the crontab stops the custody topology leaking into every
+   process listing.
+   ```bash
+   umask 077; mkdir -p ~/.config/age
+   printf '%s\n' 'age1<the-new-off-host-recipient>' > ~/.config/age/offdisk-recipient.txt
+   DEST=/mnt/jol-backup/jol-state-backup \
+     RECOVERY_PUB="$(cat ~/.config/age/offdisk-recipient.txt)" scripts/backup_state.sh; echo "RC=$?"
+   ```
+   Expect **`RC=2`** — written, off-host custody not verified — which is the truthful steady state for
+   a machine that no longer holds the second key. `RC=1` with *same physical disk* means step 2 did not
+   take effect.
+4. **Append the refresh to the existing 10-minute guard line.** This estate's recorded rule is that new
+   guards extend `check-project-mounts.sh`'s line rather than mint a timer, so that one line stays the
+   whole story and a failure has one place to be looked for.
+   ```bash
+   crontab -l > /tmp/crontab.pre-rb09-$(date +%Y%m%dT%H%M%S).txt   # back up first
+   crontab -l | sed 's|^\*/10 \* \* \* \* /opt/jol/scripts/check-project-mounts.sh;.*|&; cd /opt/jol/repos/jol-control \&\& scripts/state_backup_guard.sh >>/opt/jol/data/logs/state-backup-guard.log 2>\&1|' | crontab -
+   crontab -l | tail -3
+   ```
+   The guard's three exit codes are the contract: **0** up to date or refreshed and proven, **1**
+   refused (unmounted destination, same disk, no usable snapshot), **2** cannot-check (no second
+   recipient, uncomputable clock). It exits 2 rather than writing a single-key backup and calling the
+   job green.
+5. **Rehearse a restore monthly** to turn the steady `RC=2` into a real `0`: decrypt the newest
+   snapshot **on the machine holding the off-host identity**, compare its md5 to the `.info` sidecar,
+   and record the run. Until that happens, the off-host path is asserted, not demonstrated — which is
+   the sentence S2-012 exists to keep people from skipping.
+
+**Rollback:** restore the `/etc/fstab` backup from step 2 and `sudo umount /mnt/jol-backup`; restore
+the crontab from step 4's capture with `crontab <file`. Neither step touches the snapshots themselves,
+and no step here deletes anything.
+
+**Not covered by RB-09:** the destination is still inside the same chassis, on a **rotational
+2012-era** drive whose SMART health is unverified (`smartctl` needs a password), so fire, theft,
+surge and whole-host loss remain open; and nothing yet warns when the guard returns 1 or 2 — the
+cron line writes to a log file, and no alert channel reads it.

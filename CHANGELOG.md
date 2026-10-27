@@ -28,15 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `age --decrypt -i key missing.age | md5sum` printed the MD5 of *empty input* and exited **0**, so a
   broken backup is indistinguishable from a verified one. Trap 9 is wrong about a status; this one is
   wrong about a measurement that looks like a measurement
-- `docs/SECRETS_INVENTORY.md` row **AGE-2** for the recovery identity RB-08 now depends on, added
-  because the register's own Rule 2 makes an unregistered credential a review failure — and this change
-  created one. The row records the uncomfortable truth rather than dressing it up: the key is **still on
-  the host**, so it supplies a second *key* and not yet a second *location*. With a semantics note,
-  because two `age` recipients is **1-of-2** (either private key alone decrypts) and must not be read as
-  threshold secrecy or as AGE-1's pending "sealed 2-of-2 envelopes", which is a custody procedure
+- `docs/SECRETS_INVENTORY.md` row **AGE-2** for the recovery identity RB-08 depends on, added because
+  the register's own Rule 2 makes an unregistered credential a review failure — and this change created
+  one. **Amended the same day to record that the identity was destroyed** (see Fixed / S2-013), with
+  **AGE-3** opened for the replacement. The rows state the uncomfortable facts rather than dressing them
+  up: a second `age` recipient is **1-of-2** (either key alone decrypts), which is not threshold secrecy
+  and not AGE-1's pending "sealed 2-of-2 envelopes", a custody procedure rather than an encryption scheme
 - `docs/runbooks.md` RB-08 writes an `.info` sidecar per backup (`serial`, `lineage`, `resources`,
-  `instances`, `md5`, `recipients`, `off-host-verified`), and the Restore half now enumerates **both**
-  locations and reads the sidecar before decrypting. Previously the two halves of the same runbook did
+  `instances`, `md5`, `recipients`, `recovery-key-decrypted`, `recovery-key-location`, `device-check`),
+  and the Restore half now enumerates **both** locations and reads the sidecar before decrypting.
+  Previously the two halves of the same runbook did
   not agree: Create wrote `jol-control-tfstate-<stamp>.age` while Restore globbed
   `/opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age`, so a backup made by the new procedure
   was invisible to the recovery procedure written the same day. The sidecar also finally supplies the
@@ -46,20 +47,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 23 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 32 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
   refusal in both modes, recipient-only `NOT VERIFIED`, same-second collision, artefact permissions,
-  sidecar contents, plaintext survival). Fifteen need neither `age` nor a real state so they run in CI;
+  sidecar contents, plaintext survival). Twenty-four need neither `age` nor a real state so they run in CI;
   eight report `SKIPPED` there and are announced, never counted as passes. **Nine fixed defects were
   re-introduced into throwaway copies and each was caught by a named behavioural case.** Two ordering
   assertions were added after mutation testing showed exit codes *and* refusal text were both insufficient
-  on their own (see Fixed below). `make test` runs all five suites. **Caveat, because this claim was wrong
+  on their own (see Fixed below). `make test` runs all six suites. **Caveat, because this claim was wrong
   once already:** `apply.yml` triggers on `push: branches: [main]`, so this suite has not executed in CI
   yet — a pull request shows Compliance Scan only, and first real execution is the merge commit
+- `tests/test_retire_gate.sh` — 12 self-tests for that gate. The property is not "does it delete" but
+  "can anything delete an identity **without proof**", so every refusal case also asserts the identity is
+  still on disk. Two mutations — a vacuous proof comparison, and removing the proof check entirely —
+  each make the suite fail, so the gate is shown to be able to catch its own removal
+- `scripts/state_backup_guard.sh` — the scheduled front door for RB-08 (0 up to date or refreshed and
+  proven / 1 refused / 2 cannot-check). It refuses rather than fabricating: with no second recipient
+  recorded it exits **2** instead of writing a single-key "backup", an unmounted destination is a refusal
+  with nothing written, and a non-numeric `date +%s` is reported as UNEVALUATED rather than crashing the
+  arithmetic. Steady state on a correctly configured host is **2**, not 0, and that is deliberate
 - `make backup-state` — supplies the arguments to the script, with a usage line naming both custody
   modes and the requirement that `DEST` sit on a different block device
+- `docs/runbooks.md` **RB-09** — make the off-device backup reachable at boot and refreshed without a
+  human: verify the volume identity first (this host has **40 loop devices mounted** and a recorded
+  incident where a forensic image re-animated a UUID and hijacked a `by-uuid` mount), which is why the
+  recommended fstab source is the device path `/dev/sdb1` rather than its UUID, then append the refresh
+  to the **existing** 10-minute guard line rather than minting a timer, and rehearse a restore monthly
+  to earn a real exit 0. Rollback for both steps is stated
 - Measurement traps 14 and 15 in `docs/drift-findings.md`. **14:** a heredoc and `</dev/null` on the
   same command silently disable the heredoc — the later stdin redirect wins, so `python3 -` read its
   *program* from `/dev/null`, ran nothing and exited 0; the check that looked like a byte-identity
@@ -184,8 +200,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
-- `AGENTS.md` §3: `make test` is documented as **five** gate suites with the expected counts, and
-  `make backup-state` gains its own row stating that **exit 2 is not green**
+- `AGENTS.md` §3: `make test` is documented as **six** gate suites with the expected counts, plus rows
+  for `make backup-state` and `make retire-key`; §4 gains a standing boundary — **never delete key
+  material on an agent's instruction alone** — pointing at RB-08 step 4 and S2-013
 - `.github/workflows/plan.yml`: the `Destroy / Replace Gate` step is now armed only on positive
   evidence of a reachable inventory — a non-empty `terraform.tfstate` or a declared `backend` block —
   and otherwise emits a `::notice::` that the verdict is UNEVALUATED in CI. It previously ran
@@ -277,6 +294,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-013 — a recovery identity was destroyed before any off-host copy of it existed**, following
+  RB-08's own step 1. No data was lost: the one off-device snapshot opens with AGE-1 (`195,121` bytes,
+  md5 `b25b8821…`, matching the live state), and five other age identities plus two session transcripts
+  were each *attempted against it* and returned zero bytes. What was lost is the second custody path, so
+  the snapshot is again reachable only by a key on the same machine as the state — the condition S2-012
+  was opened to remove. `docs/SECRETS_INVENTORY.md` records AGE-2 as destroyed rather than deleting the
+  row, and adds AGE-3 as the pending replacement. The root cause is an instruction defect, not operator
+  error: three ordered actions were packed into one lettered step and the irreversible one was rendered
+  as a standalone copy-paste line, so the fix had to be a gate, not a paragraph
 - **The backup suite's guard cases were passing vacuously, twice over.** Every guard case supplies an
   invalid `RECOVERY_KEY`, so any later failure also returns the expected `RC=1`: with the wiped-state
   requirement deleted, case 7 was stopped by the *device* check and still passed. Adding a refusal-text

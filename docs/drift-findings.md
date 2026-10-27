@@ -34,6 +34,7 @@ documents cite them. In numeric order:
 | S2-010 | Two clones of repositories no longer in the organization sit in the fleet tree | open; owner decision |
 | S2-011 | This register's index omitted S1-009 | fixed |
 | S2-012 | An agent destroyed the live state file; recovery depended on an undocumented backup | recovered; automation still absent |
+| S2-013 | A recovery identity was shredded before any off-host copy existed, on instructions written by this project's own runbook | open; gate built, key must be re-minted |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1689,6 +1690,66 @@ same-disk case still exited 1 because the deliberately-fake identity file failed
 exit code, no proof at all**, and it would have been committed as coverage. Caught because the
 assertion also requires a verdict line, which came back `no-verdict`; the case now additionally asserts
 that the stubs resolved. Recorded here as the latest instance of traps 11–15.
+
+### S2-013: a recovery identity was destroyed before its off-host copy existed
+
+**Discovered:** 2026-10-27  
+**Status:** OPEN. The preventing control is built, tested and committed; the key itself is gone and must
+be re-minted by the owner. AGE-2 in `docs/SECRETS_INVENTORY.md` records the loss rather than erasing it.  
+**Severity:** S2, not S1 — **no data was lost**. The severity is custody redundancy: a control was
+declared and then irreversibly disarmed, by following the documented procedure.  
+**Confidence:** high; every claim below was measured on this host the same day.
+
+**Finding.** RB-08 step 1 told the operator to mint a recovery identity, copy it off-host, verify the
+copy, and only then delete the local half. The identity was shredded first. The private half existed
+nowhere else: five other age identities on the host (`sops/age/keys.txt`, `/opt/jol/.sops/age-jol.txt`,
+`/opt/jolarca/.sops/age-jolm.txt`, two viavitae operator keys) and two session transcripts were each
+attempted against the snapshot it had encrypted, and **every one returned zero bytes with `rc=1`**;
+only AGE-1 opens it, at 195,121 bytes and md5 `b25b88219552d3d5a47c749e2b3d85a5`, matching the live
+state. The one off-device snapshot is therefore single-custody, held by a key on the same machine as
+the state — which is the exact condition S2-012 was opened to remove.
+
+**Root cause, attributed to the instruction, not the operator.** The runbook put three ordered actions
+inside one lettered step and rendered the irreversible one as a **self-contained copy-paste line**:
+```bash
+shred -u ~/.config/age/state-recovery-20261027.txt
+```
+Nothing in the tooling conditioned that command on the proof having happened. Advice about ordering is
+not a control: it survives an attentive reader and fails a hurried one, and the whole point of an
+off-host copy is that it is produced by a human leaving the machine, which is the least attentive moment
+in the procedure. Two earlier defects in the same instruction chain — a placeholder filename that ran
+verbatim and minted a live private key, and a `/tmp` location justified by a false claim about reboot
+clearing — were the same failure wearing different clothes.
+
+**Fix, and why it is shaped this way.** `scripts/retire_recovery_key.sh` makes the proof a
+precondition of the deletion rather than a preceding paragraph. Phase 1 emits a random nonce,
+encrypts it to the recipient under test, and stores the expected answer **only as a hash**; phase 2
+refuses unless the caller supplies a nonce that only the private half can recover, which is evidence
+that a working copy exists somewhere this machine cannot read. It deletes nothing until then, refuses
+to place the challenge beside the identity it is testing, rejects a stale nonce against a new identity,
+and leaves the identity in place on every refusal path — because a gate that destroys on failure is
+worse than no gate at all. `tests/test_retire_gate.sh` holds 12 cases; two mutations (a vacuous proof
+comparison, and removing the proof check) each make the suite fail, so the gate is shown to be able to
+catch its own removal.
+
+**Second-order effect, deliberately kept.** `backup_state.sh` requires a recovery recipient *different*
+from the host key, and `state_backup_guard.sh` exits **2** rather than running when no recipient is
+recorded. So with the identity gone, further backups are **refused**, not silently degraded to one key.
+That refusal is the control: the schedule cannot quietly produce a single-custody artefact and call it
+a backup. It does mean the estate is currently unable to refresh the off-device snapshot until a new
+identity is minted and carried off-host, which is the honest cost of the loss and is stated here rather
+than smoothed over.
+
+**What is NOT fixed by any of this.** The destroyed key cannot be recovered, so any future need to open
+that specific snapshot depends on one key on one machine. Re-minting (AGE-3) protects every *future*
+snapshot; it does not retroactively protect `20261027T183202Z`. A restore rehearsal on the new path
+(RB-09 step 5) is the only thing that converts "two custodies" from a claim into a measurement.
+
+**Files affected:** `scripts/retire_recovery_key.sh`, `tests/test_retire_gate.sh`,
+`scripts/state_backup_guard.sh`, `tests/test_backup_gate.sh` (cases 24–32), `Makefile`
+(`retire-key`; `test` gains the retire suite), `docs/runbooks.md` (RB-08 step 4, RB-09),
+`docs/SECRETS_INVENTORY.md` (AGE-2 → destroyed, AGE-3 → pending), `.github/workflows/apply.yml`,
+`AGENTS.md` §3.
 
 ---
 

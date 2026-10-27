@@ -48,7 +48,8 @@ this organization is complete until S1-007 is closed.
 |---|---|---|
 | `make help` | List targets | |
 | `make validate` | Validate 40 repo YAML definitions | Expected: `PASSED — 40 repo definitions validated successfully.` |
-| `make test` | Self-tests for all five gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 23 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate`, `PASSED — 23 backup-gate` |
+| `make test` | Self-tests for all six gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 23 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate`, `PASSED — 32 backup-gate`, `PASSED — 12 retire-gate` |
+| `make retire-key KEY=<identity> [PROOF=<nonce>]` | Destroy a recovery identity ONLY after proving an off-host copy opens the challenge | 0 proof accepted and retired / 1 refused, **identity left in place** / 2 cannot-check. Two-phase: run once without `PROOF` to get the challenge, decrypt it on the other machine, re-run with its nonce |
 | `make backup-state DEST=<dir on another disk> RECOVERY_PUB=age1…` | Encrypt `terraform.tfstate` off-device per `docs/runbooks.md` RB-08 | 0 both custody paths proven / 1 refused, nothing written / 2 written but a control unchecked — **2 is not green**. `DEST` must be outside this repository and on a different block device than the state |
 | `make state-gate` | STOP gate: does the state on disk account for the config? | 0 safe / 1 refused / 2 cannot-check |
 | `make agents-gate` | STOP gate: is section 2 below still a well-formed table with evidence per row? | 0 pass / 1 violation / 2 cannot-check. Runs in `apply.yml`'s `Dev — Validate` on every push to `main` (`AGENTS.md` was added to that workflow's `paths:` filter for exactly this reason) and in `compliance-scan.yml` on pull requests and the weekly schedule |
@@ -75,6 +76,11 @@ this organization is complete until S1-007 is closed.
 `enforce_signed_commits`, `sensitive_repos`, any `visibility` value, any
 `prevent_destroy` or `lifecycle` block, `required_approving_review_count`, and
 anything in `branch-protection.tf`'s dynamic blocks.
+
+**Never delete key material on an agent's instruction alone.** `docs/runbooks.md` RB-08 step 4 and
+finding S2-013 exist because a recovery identity was shredded before its off-host copy was made.
+Destroying a cryptographic identity is irreversible, so it is gated: run `make retire-key`, and do not
+remove an identity until that gate has been satisfied by a nonce only the off-host copy can produce.
 
 > **solo_mode exit criteria:** see `docs/solo-mode-exit.md` for the conditions
 > under which `solo_mode` should be disabled and the transition checklist.
