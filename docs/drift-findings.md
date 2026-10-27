@@ -38,6 +38,7 @@ documents cite them. In numeric order:
 | S2-014 | Both private keys sat on the device the off-device backups were made to survive; an interim key copy on `sdb` fixes that and leaves every disk holding a key beside its ciphertext | open; needs an off-machine key copy |
 | S2-015 | A RB-09 cron-editing instruction from this repository corrupted jol's crontab; caught in-session and restored | closed; instruction replaced and verified |
 | S2-016 | The estate's alerting chain is non-functional end to end, so no scheduled failure can notify anyone | open; `make backup-status` is the interim pull |
+| S2-017 | The custody rehearsal shipped in `c4eb8b6` was defective four times over, and the gate beside it could never report success | closed by replacement; 13 cases added |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -506,6 +507,23 @@ them, and neither changed the enforcement state of anything.
     concatenation has no such metacharacter. The rule: when you mutate something that runs on a
     schedule, take the backup first, and verify by reading **the whole artifact and its diff**, never
     by counting how many lines match a pattern.
+19. **A mutation that does not take effect makes the case meant to catch it pass.** To prove a wrong key
+    is refused, the test overwrote the packet's identity with `age-keygen -o "$f"` — and `age-keygen`
+    **refuses to overwrite an existing file**, silently. The key never changed, `verify` correctly
+    succeeded, and the case reported `want 1 / got 0`, which looked like a product bug. Every negative
+    test must assert that the mutation landed (compare the derived public key before and after) before
+    it asserts anything about behaviour.
+20. **A helper whose optional argument list is empty can shift past the end of its arguments.** The
+    rehearsal harness collected `VAR=value` pairs with `while [ "$1" != "--" ]`; three call sites passed
+    no variables and no `--`, so `shift` ran off the end and `$1` under `set -u` aborted the whole file
+    *after* case 32 — 32 passes printed, no summary, which in CI reads as a step that finished. Fixed by
+    bounding the loop on `$#` and making helper misuse a counted FAIL rather than a crash: a checker must
+    fail loudly, never exit quietly having checked nothing.
+21. **`mktemp -d --mode=700` is unsupported here and yields an empty variable**, so paths derived from it
+    collapsed to `/offhost-attested` and the test ran against the real host while printing plausible
+    results. Use `mkdir -p` plus `chmod`. The same class produced a false `OK` from `sha256sum -c` on an
+    absolute-path manifest (S2-017): the source files were still at home, so it verified the originals
+    and reported success for a copy that was never examined.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1918,6 +1936,54 @@ secret store with an `SECRETS_INVENTORY.md` row; or fix S1-003 so a mail address
 Until then the honest design is the pull plus a verdict that refuses to look like a pass.
 
 **Files affected:** `scripts/backup_status.sh`, `Makefile` (`backup-status`), `AGENTS.md` §3,
+`docs/runbooks.md` RB-09.
+
+### S2-017: the first custody rehearsal was theatre, and `backup-status` had no path to a pass
+
+**Discovered:** 2026-10-27, reviewing `c4eb8b6` — authored minutes earlier  
+**Status:** CLOSED by replacement: `scripts/offhost_rehearsal.sh`, 13 new cases (suite 32 → 45). Recorded
+because the defective version was committed **and pushed**, and nothing that ran it reported a problem.  
+**Severity:** S2, with an S1-shaped tail: one of the four defects was a gate that cannot pass.
+
+1. **`backup-status` could not return 0.** The healthy branch ended with
+   `[ "$rc" -eq 0 ] && unk "off-machine custody" …`, so success was downgraded to 2 by construction;
+   three input variants gave `2 / 1 / 1`. The changelog and the runbook both promised "expect 0 after
+   step 5" — a claim about a command that could not produce it. A gate whose pass state is unreachable
+   teaches the operator that 2 is normal, which is how every other gate in this estate died.
+2. **The manifest held absolute paths.** `sha256sum /tmp/offhost-packet/* > …/SHA256SUMS`; on the other
+   machine `sha256sum -c` prints `OK` against `/tmp/offhost-packet/…` — files that exist only at home. My
+   own first verification of this very point passed for that reason, and only looked wrong once the source
+   directory was deleted. Relocation tests must delete the origin.
+3. **A private identity was staged into `/tmp`** (`1777`, reaped after 30 days per `D /tmp 1777 root root
+   30d`) beside the ciphertext it opens, with no cleanup step written. The replacement measures the hazard
+   instead of pattern-matching the path: an earlier draft refused anything under `/tmp`, which also
+   refused a legitimate key directory that happened to live there — caught by the first sandbox run, which
+   deadlocked the whole flow. Staging now refuses a world-writable parent (`stat -c '%a'`) and a path
+   inside the repository.
+4. **The snapshot name was hard-coded** (`…T200234Z`) while the guard writes a new one daily, so the
+   packet would name a superseded file within 24 hours. `pack` selects the newest per run.
+
+**The design flaw underneath:** carrying the key and the ciphertext to another machine and decrypting
+proves that machine *has* a key; it records nothing re-checkable about custody. The round trip now uses a
+nonce encrypted to the recipient, stored here **only as a hash**, recovered on the other machine and
+consumed on return — replay is refused, and the attestation **expires** (30 days) rather than turning the
+gate permanently green. Proof, not assertion: the same mechanism already in `retire_recovery_key.sh`, which
+I had written a worse version of here.
+
+**Also found: an errexit landmine in two committed suites.** Both shell suites declare `set -uo pipefail`
+(deliberately — a suite must run and count every case) yet wrapped timeouts in `set +e … ; rc=$?; set -e`,
+and that trailing `set -e` turns errexit on **for the remainder of the file**. In `test_retire_gate.sh` it
+sat near the end and nothing noticed; in `test_backup_gate.sh` a later `nf=$(grep -c '^FAIL:' …)` — `grep
+-c` exits 1 on zero matches — aborted the run after case 32, printing 32 passes and no verdict. Replaced
+throughout with `rc=0; cmd || rc=$?`. A test file must not alter shell options it does not restore: the
+damage lands on whoever appends next.
+
+**Rollback:** the rehearsal writes only under `~/.config/age/` and its own packet directory; removing
+`offhost-attested` returns `make backup-status` to `2`. `make retire-key` stays separately gated and is
+not satisfied by an attestation of another *machine*.
+
+**Files affected:** `scripts/offhost_rehearsal.sh`, `scripts/backup_status.sh`,
+`tests/test_backup_gate.sh` (32 → 45), `tests/test_retire_gate.sh`, `Makefile`, `AGENTS.md` §3,
 `docs/runbooks.md` RB-09.
 
 ---

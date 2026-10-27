@@ -20,6 +20,8 @@ DEST="${DEST:-/mnt/jol-backup/jol-state-backup}"
 KEYDIR="${KEYDIR:-$HOME/.config/age}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$KEYDIR/offdisk-recipient.txt}"
 MAX_AGE_H="${MAX_AGE_H:-24}"
+ATTEST_MAX_H="${ATTEST_MAX_H:-720}"   # a custody attestation older than 30 days is not evidence
+ATTESTED="${ATTESTED:-$KEYDIR/offhost-attested}"
 
 rc=0
 note() { printf '  %-26s %s\n' "$1" "$2"; }
@@ -78,13 +80,32 @@ fi
 if [ -s "$RECIPIENT_FILE" ]; then
   note "second recipient" "$(sed -n '1p' "$RECIPIENT_FILE" | cut -c1-18)…"
   if [ -d "$DEST/keys" ] && [ -n "$(ls -A "$DEST/keys" 2>/dev/null)" ]; then
-    note "key copies found" "this host AND $DEST/keys"
+    note "key copies here" "this host AND $DEST/keys"
   else
-    note "key copies found" "this host only"
+    note "key copies here" "this host only"
   fi
-  # Neither branch above says anything about another MACHINE, and nothing run here can. Reported as
-  # UNEVALUATED so a healthy-looking run cannot be read as "custody is fine".
-  [ "$rc" -eq 0 ] && unk "off-machine custody" "NOT PROVEN - run RB-09 step 5 elsewhere; exit 2 is expected"
+  # Custody is proven only by the challenge round-trip in offhost_rehearsal.sh: a nonce encrypted to
+  # the recipient was recovered on another machine. It is a dated record, so it can expire - which is
+  # what makes 0 reachable without letting it become a permanent green light.
+  if [ -s "$ATTESTED" ]; then
+    aw="$(sed -n 's/^attested=//p' "$ATTESTED")"
+    arec="$(sed -n 's/^recipient=//p' "$ATTESTED")"
+    ats="$(date -u -d "$aw" +%s 2>/dev/null || echo 0)"
+    if [ "$arec" != "$(sed -n '1p' "$RECIPIENT_FILE" | tr -d ' \t')" ]; then
+      bad "off-machine custody" "attested for a DIFFERENT recipient - re-run the rehearsal"
+    elif [ "$ats" -le 0 ]; then
+      unk "off-machine custody" "attestation timestamp unreadable: '$aw'"
+    else
+      aage_h=$(( ( $(date -u +%s) - ats ) / 3600 ))
+      if [ "$aage_h" -lt "$ATTEST_MAX_H" ]; then
+        note "off-machine custody" "attested ${aage_h}h ago (limit ${ATTEST_MAX_H}h): challenge recovered elsewhere"
+      else
+        bad "off-machine custody" "attestation is ${aage_h}h old (> ${ATTEST_MAX_H}h) - rehearse again"
+      fi
+    fi
+  else
+    [ "$rc" -eq 0 ] && unk "off-machine custody" "NOT PROVEN - run RB-09 step 5, then: scripts/offhost_rehearsal.sh attest <token>"
+  fi
 else
   bad "second recipient" "no $RECIPIENT_FILE - backups are refused until one exists (RB-09 step 3)"
 fi

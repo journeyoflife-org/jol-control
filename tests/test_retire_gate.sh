@@ -139,13 +139,13 @@ fi
 # 13-14: the separation rule. These are the refusals that matter most, because they are the ones that
 # stop the ceremony being satisfied from the disk it is about to make unrecoverable.
 mint
-set +e; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/nochal" </dev/null >"$W/last" 2>&1; rc=$?; set -e
+rc=0; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/nochal" </dev/null >"$W/last" 2>&1 || rc=$?
 if [ "$rc" = 1 ] && alive && grep -q 'cannot resolve the physical disk' "$W/last"; then
   ok "13 unresolvable device -> REFUSE to destroy" "rc=1, identity intact"
 else bad "13 unresolvable device -> REFUSE to destroy" "rc=$rc (destruction must not be offered)"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
 mint
 mkdir -p "$W/samedir"
-set +e; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/samedir" </dev/null >"$W/last" 2>&1; rc=$?; set -e
+rc=0; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/samedir" </dev/null >"$W/last" 2>&1 || rc=$?
 if [ "$rc" = 1 ] && alive && grep -q 'SAME disk as the identity' "$W/last"; then
   ok "14 challenge on the identity's own disk -> refuse" "rc=1, identity intact"
 else bad "14 challenge on the identity's own disk -> refuse" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi

@@ -14,14 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   today is 2**, deliberately: no check running here can prove a copy exists elsewhere, and reporting
   that as a pass is the failure mode this thread kept hitting. It exists because the estate has no
   working push channel (S2-016), so an alert would have been theatre
-- `docs/runbooks.md` RB-09 gains a concrete off-machine rehearsal packet: exact file names, a
-  `sha256sum` manifest, and a self-contained block taking no placeholders — it validates the identity
-  path, the decrypt exit status, the output size, the empty-input digest and the sidecar md5, then
-  shreds the plaintext. **Verified against adversarial inputs, not just the happy path**: a *wrong* age
-  key placed at the expected path yields `FAIL: decrypt exited 1` / exit 1, a garbage file the same,
-  and restoring the real key returns `PASS` / exit 0 with no plaintext residue. Earlier commands in this
-  documentation were handed over untested three times and each produced a failure the operator had to
-  decode (`RC=127`, a shell syntax error, a false md5)
+- `docs/runbooks.md` RB-09 and `scripts/offhost_rehearsal.sh` — the off-machine custody rehearsal as a
+  challenge round-trip: `make backup-pack` stages a packet holding the newest snapshot, its sidecar, a
+  recovery identity and a nonce encrypted to the recipient (only its **hash** is kept here); the packet
+  carries its own `verify`, which checks a **relative-path** manifest before decrypting anything; the
+  token recovered on the far machine is brought back to `make backup-attest`, which consumes the pending
+  challenge so the same token cannot be replayed. Attestation **expires** after 30 days
+  (`ATTEST_MAX_H`), which is what lets `make backup-status` reach 0 without becoming a permanent green
+  light. This replaces an earlier version of the same instruction that staged a private identity in
+  `/tmp`, shipped an absolute-path manifest that verified the files left at home, named a snapshot the
+  daily guard had already superseded, and proved nothing about custody — see finding S2-017
 - `make fmt-check` — non-mutating Terraform formatting STOP gate (`terraform fmt -check
   -recursive`; exit 0 clean / 3 unformatted). `make lint` now depends on it instead of on `fmt`,
   so the documented verification command no longer rewrites files as a side effect
@@ -61,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 32 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 45 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -220,6 +222,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
+- `tests/test_backup_gate.sh` and `tests/test_retire_gate.sh` no longer toggle errexit. Both declare
+  `set -uo pipefail` so every case runs and is counted, but wrapped their timeouts in
+  `set +e … ; rc=$?; set -e`, which turned errexit **on for the rest of the file**. The backup suite then
+  aborted after case 32 on an ordinary `grep -c` returning 1 for zero matches — printing 32 passes and
+  no verdict — while the retire suite had the same latent fault and only survived because the `set -e`
+  landed near its end. Replaced with `rc=0; cmd || rc=$?` throughout, and the rehearsal helper now counts
+  its own misuse as a FAIL rather than crashing
+- `docs/runbooks.md` RB-09's off-machine rehearsal is now the `offhost_rehearsal.sh` round-trip, and the
+  stale CI census beside it was re-measured in a mirror tree rather than copied forward: **24 pass, 21
+  skip, exit 0** (it had claimed 24/8). `make backup-status` gained `ATTEST_MAX_H` (default 720h) so a
+  custody claim expires instead of calcifying, and it now re-derives disk separation with `findmnt` +
+  `lsblk` rather than trusting the sidecar's own `device-check` line
 - `AGENTS.md` §3: `make test` is documented as **six** gate suites with the expected counts, plus rows
   for `make backup-state` and `make retire-key`; §4 gains a standing boundary — **never delete key
   material on an agent's instruction alone** — pointing at RB-08 step 4 and S2-013

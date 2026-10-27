@@ -334,14 +334,103 @@ if [ -f "$GUARD" ]; then
   else fail=$((fail+1)); echo "  FAIL  31 artefacts left by a refused run: $(find "$GD" -type f | wc -l)"; fi
   # A non-numeric clock must produce UNEVALUATED, not a bash arithmetic crash.
   mkdir -p "$W/baddate"; printf '#!/bin/sh\necho 19700101T000000Z\n' > "$W/baddate/date"; chmod +x "$W/baddate/date"
-  set +e; timeout 120 env PATH="$W/nolog:$W/baddate:/usr/bin:/bin" RECIPIENT_FILE="$REC" DEST="$GD" \
-      REPO="$REPO" MAX_AGE_H=24 bash "$GUARD" </dev/null >"$W/go" 2>&1; brc=$?; set -e
+  brc=0; timeout 120 env PATH="$W/nolog:$W/baddate:/usr/bin:/bin" RECIPIENT_FILE="$REC" DEST="$GD" \
+      REPO="$REPO" MAX_AGE_H=24 bash "$GUARD" </dev/null >"$W/go" 2>&1 || brc=$?
   if [ "$brc" = 2 ] && grep -q 'cannot compute snapshot age' "$W/go"; then
     pass=$((pass+1)); printf '  ok    %-46s RC=2, named the cause\n' "32 broken date -> UNEVALUATED"
   else fail=$((fail+1)); printf '  FAIL  %-46s RC=%s\n' "32 broken date -> UNEVALUATED" "$brc"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
   rm -f "$REC"; find "$GD" -type f -delete 2>/dev/null; rmdir "$GD" 2>/dev/null
 else
   skip=$((skip+9)); echo "  SKIP   scheduled-refresh guard absent ($GUARD) - 9 cases not evaluated"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 33-45: the off-machine custody rehearsal (scripts/offhost_rehearsal.sh) and the status pull
+# (scripts/backup_status.sh). These cases exist because the first version of this instruction was
+# handed to a human untested and failed three ways: a manifest of ABSOLUTE paths that "verified" only
+# because the source files were still at home, a private identity staged in a world-writable /tmp, and
+# a status gate whose success code was unreachable. Each is asserted here, and every mutation test
+# first proves the mutation TOOK (age-keygen silently refuses to overwrite, which made one early case
+# pass for the wrong reason).
+# ─────────────────────────────────────────────────────────────────────────────
+RH="$REPO/scripts/offhost_rehearsal.sh"
+ST="$REPO/scripts/backup_status.sh"
+if [ -f "$RH" ] && [ -f "$ST" ] && command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
+  rh(){ # run <expect-rc> <label> <must-say> <VAR=v ...> -- <command...>
+    local want=$1 label=$2 says=$3; shift 3
+    local envs=(); while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+    if [ $# -eq 0 ] || [ "$1" != "--" ]; then fail=$((fail+1)); echo "  FAIL  $label: helper misuse, no -- separator"; return 0; fi
+    shift
+    local rc=0; timeout 180 env "${envs[@]}" "$@" </dev/null >"$W/rho" 2>&1 || rc=$?
+    local verdict=ok
+    [ "$rc" = "$want" ] || verdict="RC=$rc want=$want"
+    grep -qF -- "$says" "$W/rho" || verdict="$verdict; expected text missing"
+    # `|| true` on every counter: this suite runs WITHOUT errexit by design (`set -uo pipefail`), and
+    # a `set -e` left over from a neighbouring case used to abort the whole file mid-block, silently
+    # dropping every later case. grep -c exits 1 when it counts zero, so an unprotected assignment is
+    # fatal the moment anything turns errexit on.
+    local nf nfe; nf=$(grep -c '^FAIL:' "$W/rho" || true); nfe=$(grep '^FAIL:' "$W/rho" | grep -cF -- "$says" || true)
+    if [ "$nf" -gt 0 ] && [ "$nf" -ne "$nfe" ]; then verdict="$verdict; a DIFFERENT guard stopped it"; fi
+    if [ "$verdict" = ok ]; then pass=$((pass+1)); printf '  ok    %-46s RC=%s\n' "$label" "$rc"
+    else fail=$((fail+1)); printf '  FAIL  %-46s %s\n' "$label" "$verdict"; sed -n '1,3p' "$W/rho" | sed 's/^/          /'; fi
+    return 0
+  }
+  RK="$W/rh"; KB="$RK/keydir"; DB="$RK/dest"; HB="$RK/home"
+  mkdir -p "$KB" "$DB" "$HB"; chmod 700 "$RK" "$KB"
+  age-keygen -o "$KB/state-backup-key.txt"     >/dev/null 2>&1
+  age-keygen -o "$KB/state-recovery-test.txt"  >/dev/null 2>&1
+  RPUB=$(age-keygen -y "$KB/state-recovery-test.txt"); BKEY=$(age-keygen -y "$KB/state-backup-key.txt")
+  printf '%s\n' "$RPUB" > "$KB/offdisk-recipient.txt"
+  # 88 KB of plausible state: a 187-byte fixture sailed past the size floor and made three later
+  # cases pass on the wrong assertion, so the payload is deliberately larger than the threshold.
+  python3 -c "import json,sys; sys.stdout.write(json.dumps({'version':4,'terraform_version':'1.15.5','serial':306,'lineage':'test','resources':[{'mode':'managed','type':'github_repository','name':'r%d'%i,'instances':[{'attributes':{'name':'jol-%03d'%i}}]} for i in range(600)]}))" > "$RK/plain.json"
+  PMD5=$(md5sum "$RK/plain.json" | cut -d' ' -f1)
+  age --encrypt -r "$BKEY" -r "$RPUB" --output "$DB/jol-control-terraform.tfstate.20260101T000000Z.age" "$RK/plain.json"
+  printf 'snapshot  : x\nmd5  : %s\nresources   : 600\nrecovery-key-decrypted: yes\nrecovery-key-location : NOT CHECKED\ndevice-check  : verified-different: state=nvme0n1 backup=sdb\n' "$PMD5" > "$DB/jol-control-terraform.tfstate.20260101T000000Z.age.info"
+  rm -f "$RK/plain.json"
+  RENV=(KEYDIR="$KB" DEST="$DB" REPO="$HB" RECIPIENT_FILE="$KB/offdisk-recipient.txt")
+
+  rh 0 "33 pack builds a packet"                     "CARRY the whole directory" "${RENV[@]}" OUT="$KB/offhost-packet" -- bash "$RH" pack
+  dmode=$(stat -c '%a' "$KB/offhost-packet" 2>/dev/null || echo 000)
+  if [ "$dmode" = 700 ]; then pass=$((pass+1)); echo "  ok    34 packet dir is 700"
+  else fail=$((fail+1)); echo "  FAIL  34 packet dir mode is $dmode, want 700"; fi
+  if cut -d' ' -f3- "$KB/offhost-packet/MANIFEST.sha256" | grep -q '/'; then
+    fail=$((fail+1)); echo "  FAIL  35 manifest holds PATH SEPARATORS - it cannot verify after relocation"
+  else pass=$((pass+1)); echo "  ok    35 manifest is relative (the absolute-path bug is gone)"; fi
+
+  mkdir -p "$RK/world"; chmod 777 "$RK/world"
+  rh 1 "36 pack refuses a world-writable parent"     "world-writable" "${RENV[@]}" OUT="$RK/world/packet" -- bash "$RH" pack
+  rh 1 "37 pack refuses to stage inside the repo"    "inside the repository" "${RENV[@]}" OUT="$HB/packet" -- bash "$RH" pack
+  rh 1 "38 pack refuses to overwrite a packet"       "already exists" "${RENV[@]}" OUT="$KB/offhost-packet" -- bash "$RH" pack
+
+  # Relocate, then DELETE the source. Without the delete the old absolute manifest "verified" the
+  # originals and reported success for a copy that was never checked.
+  cp -a "$KB/offhost-packet" "$RK/carried"; rm -rf "$KB/offhost-packet"
+  rh 0 "39 verify after relocation, source deleted"  "PASS: snapshot" -- bash "$RK/carried/offhost_rehearsal.sh" verify
+  grep -q "md5 $PMD5" "$W/rho" || { echo "  note   39 PASS did not quote the fixture md5"; }
+  RTOK=$(sed -n 's/^  ATTEST \([0-9a-f]\{32\}\) .*/\1/p' "$RK/vtok" 2>/dev/null)
+  timeout 120 bash "$RK/carried/offhost_rehearsal.sh" verify </dev/null >"$RK/vtok" 2>&1 || true
+  RTOK=$(sed -n 's/^  ATTEST \([0-9a-f]\{32\}\) .*/\1/p' "$RK/vtok")
+  if [ ${#RTOK} = 32 ]; then pass=$((pass+1)); echo "  ok    40 verify emitted a 32-char attestation token"
+  else fail=$((fail+1)); echo "  FAIL  40 no token emitted (${#RTOK} chars) - round trip cannot complete"; fi
+
+  rh 1 "41 attest rejects a wrong token"             "does not match the outstanding challenge" "${RENV[@]}" -- bash "$RH" attest 00000000000000000000000000000000
+  rh 0 "42 attest accepts the recovered token"       "ATTESTED: recorded" "${RENV[@]}" -- bash "$RH" attest "$RTOK"
+  rh 1 "43 the same token cannot be used twice"      "no outstanding challenge" "${RENV[@]}" -- bash "$RH" attest "$RTOK"
+
+  cp -a "$RK/carried" "$RK/tam"; printf 'x' >> "$RK/tam/attest-challenge.age"
+  rh 1 "44 tampered packet fails the manifest"       "manifest mismatch" -- bash "$RK/tam/offhost_rehearsal.sh" verify
+  if grep -q 'challenge decrypted' "$W/rho"; then fail=$((fail+1)); echo "  FAIL  44 decrypt ran anyway - manifest is not a gate"; fi
+  cp -a "$RK/carried" "$RK/wk"; rm -f "$RK/wk/state-recovery-test.txt"
+  age-keygen -o "$RK/wk/state-recovery-test.txt" >/dev/null 2>&1
+  if [ "$(age-keygen -y "$RK/wk/state-recovery-test.txt")" = "$RPUB" ]; then
+    fail=$((fail+1)); echo "  FAIL  45 key swap did not take - that case would pass vacuously"
+  else
+    rm -f "$RK/wk/MANIFEST.sha256"; ( cd "$RK/wk" && sha256sum -- * > MANIFEST.sha256 )
+    rh 1 "45 wrong identity cannot open its challenge" "cannot open its own challenge" -- bash "$RK/wk/offhost_rehearsal.sh" verify
+  fi
+else
+  skip=$((skip+13)); echo "  SKIP   rehearsal scripts or age absent - 13 cases not evaluated"
 fi
 
 echo "---"

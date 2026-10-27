@@ -717,16 +717,17 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 32 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 45 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
 level, because the suite provably cannot detect its removal behaviourally. Cases 24–32 cover
 `scripts/state_backup_guard.sh`, the scheduled front door described in RB-09. **Twenty-four** cases
-need neither `age` nor a real state and therefore run in CI (24 passed, 8 skipped, exit 0); the eight
-crypto cases additionally need `age` **and** a real `terraform.tfstate`, which a runner cannot have
-(state is gitignored), so they report `SKIPPED` and are announced rather than counted as passes.
-Locally: **32 passed, 0 failed**.
+need neither `age` nor a real state and therefore run in CI (measured in a mirror tree with the crypto
+block forced off: **24 passed, 21 skipped, exit 0**); the 21 skipped cases additionally need `age` **and**
+a real `terraform.tfstate`, which a runner cannot have (state is gitignored), so they report `SKIPPED`
+and are announced rather than counted as passes.
+Locally: **45 passed, 0 failed, 0 skipped** (cases 33–45 cover the custody rehearsal below).
 
 The suite was falsified rather than trusted. Nine defects that were fixed were each reintroduced into
 a **throwaway copy** — never the working tree — and every one is caught by a named behavioural case:
@@ -1009,41 +1010,55 @@ Prometheus scraping only itself), so a run of `1`s would be invisible until some
 backup-status` is the interim: one pull, 0/1/2, that re-derives the disk separation instead of
 trusting the sidecar and refuses to report anything it cannot see as a pass.
 
-### The off-machine rehearsal, concretely
+### The off-machine rehearsal, as a challenge round-trip
 
-Step 5 is the one action that closes S2-014, so it is spelled out with the real file names rather than
-placeholders — the last three commands written for this runbook with angle brackets or a missing file in
-them each produced a failure the operator had to interpret (`RC=127`, `bash: syntax error near
-unexpected token`, a false md5).
+Step 5 is the one action that closes S2-014. The first version of this section told the operator to copy
+the snapshot, its sidecar and the recovery identity into `/tmp/offhost-packet`, carry that, and decrypt
+by hand. Three defects made that instruction worse than no instruction, and all three were found by
+running it rather than by reading it:
 
-**Here**, stage the three files anywhere outside the repository:
+| Defect | Why it mattered | Now |
+|---|---|---|
+| `sha256sum /tmp/offhost-packet/*` wrote **absolute** paths into the manifest | On the other machine `sha256sum -c` reported `OK` — for the files still sitting at home, not the copies. A truncated transfer would have verified clean | the manifest is generated from inside the packet with relative names, and is verified **before** anything decrypts (case 44) |
+| a private identity staged under `/tmp`, mode 1777, reaped after 30 days | the key sat beside the ciphertext it unlocks, in a directory every account can write to | staging refuses a world-writable parent and a path inside the repository; the packet is `700`, contents `600` (cases 34, 36, 37) |
+| a **hard-coded** snapshot name | the guard writes a new snapshot daily, so the named file was already superseded | `pack` selects the newest snapshot in the destination every run |
+
+And the deeper flaw: decrypting the snapshot on another machine proves that machine *has a key*. It says
+nothing about custody that a local check cannot verify — so the round trip now carries a **proof token**.
+
 ```bash
-cd /mnt/jol-backup/jol-state-backup
-mkdir -p /tmp/offhost-packet && cp -p jol-control-terraform.tfstate.20261027T200234Z.age \
-  jol-control-terraform.tfstate.20261027T200234Z.age.info keys/state-recovery-20261027-b.txt /tmp/offhost-packet/
-sha256sum /tmp/offhost-packet/* > /tmp/offhost-packet/SHA256SUMS
-cat /tmp/offhost-packet/SHA256SUMS
+make backup-pack                       # on this host; prints the packet location and the carry steps
+# carry the WHOLE directory - nothing else comes back
+cd <where you put it>
+bash offhost_rehearsal.sh verify       # on the OTHER machine; it locates itself, edits no paths
+make backup-attest TOKEN=<what verify prints>     # back here
+make backup-status                                # 0 only if the attestation is fresh
 ```
-Carry `/tmp/offhost-packet` to the other machine by whatever means is not this machine, verify the
-checksums there, then run **this** on that machine — it takes the identity path as one argument and
-refuses if it is wrong, so there is nothing to substitute and nothing to get wrong:
+
+`pack` encrypts a fresh 16-byte nonce to the off-device recipient and stores only its **hash** in
+`~/.config/age/offhost-attestation.pending`. `verify` must recover that nonce by decrypting with the
+identity inside the packet, and must also open the snapshot to an md5 matching the sidecar. `attest`
+compares the hash of the brought-back token to the pending record, then consumes it — replaying the same
+token is refused (case 43). So the record is produced by a holder of the private half, not by a checkbox.
+
+What it still does **not** prove, and must never be written as if it did: that the other machine is
+offsite, fireproof, or that the copy it holds is current. `backup-status` therefore expires the
+attestation after 30 days (`ATTEST_MAX_H`) and reverts to `2`.
+
+Then delete the packet from whichever machine it landed on, unless that machine is where custody is meant
+to live:
+
 ```bash
-ID=./state-recovery-20261027-b.txt SNAP=./jol-control-terraform.tfstate.20261027T200234Z.age \
-  bash -c 'test -s "$ID" || { echo "FAIL: identity not at $ID"; exit 2; }
-           test -s "$SNAP" || { echo "FAIL: snapshot not at $SNAP"; exit 2; }
-           want=$(sed -n "s/^md5  *: //p" "$SNAP.info")
-           age --decrypt -i "$ID" "$SNAP" > /tmp/offhost-decrypt.json 2>/tmp/offhost-decrypt.err
-           rc=$?; sz=$(stat -c%s /tmp/offhost-decrypt.json 2>/dev/null || echo 0)
-           got=$(md5sum /tmp/offhost-decrypt.json 2>/dev/null | cut -d" " -f1)
-           shred -u /tmp/offhost-decrypt.json /tmp/offhost-decrypt.err 2>/dev/null
-           if   [ "$rc" -ne 0 ]; then echo "FAIL: decrypt exited $rc"; exit 1
-           elif [ "$sz" -lt 1000 ]; then echo "FAIL: $sz bytes - nothing decrypted"; exit 1
-           elif [ "$got" = d41d8cd98f00b204e9800998ecf8427e ]; then echo "FAIL: md5 of empty input"; exit 1
-           elif [ "$got" != "$want" ]; then echo "FAIL: got $got, sidecar says $want"; exit 1
-           else echo "PASS: custody proven off-host; md5=$got matches the sidecar, plaintext shredded"
-           fi'
+find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
-A `PASS` there is the evidence S2-014 asks for: the copy that decrypts is not on this machine, and no
-disk failure here leaves the inventory unreadable. Record the date, the snapshot name and that md5 in
-this register — and only then consider `make retire-key` for the local copy, which it will refuse until
-a copy on another **disk** proves the same thing.
+
+**Committed harness — 45 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
+Locally: **45 passed, 0 failed, 0 skipped**.
+
+**Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;
+`terraform.tfstate` is opened for reading by the backup script, never here. Removing
+`offhost-attested` returns `make backup-status` to `2` and changes no behaviour, so a bad attestation is
+retracted by `rm ~/.config/age/offhost-attested`. `make retire-key` remains separately gated: it refuses
+until a copy on another **disk** proves the same thing, and an attestation of another **machine** does not
+substitute for it.
