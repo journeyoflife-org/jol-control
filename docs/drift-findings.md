@@ -36,6 +36,7 @@ documents cite them. In numeric order:
 | S2-012 | An agent destroyed the live state file; recovery depended on an undocumented backup | recovered; automation still absent |
 | S2-013 | A recovery identity was shredded before any off-host copy existed, on instructions written by this project's own runbook | open; gate built, key must be re-minted |
 | S2-014 | Both private keys sat on the device the off-device backups were made to survive; an interim key copy on `sdb` fixes that and leaves every disk holding a key beside its ciphertext | open; needs an off-machine key copy |
+| S2-015 | A RB-09 cron-editing instruction from this repository corrupted jol's crontab; caught in-session and restored | closed; instruction replaced and verified |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -494,6 +495,16 @@ them, and neither changed the enforcement state of anything.
     production code.** It needs no placeholder that parses as syntax, no pipe that can swallow an exit
     status, and it must be executed verbatim at least once before it is handed over — the same bar
     applied to the fence in trap 11, which is what caught the others.
+18. **`&` in a `sed` replacement is the matched text, and in a crontab edit that is the whole line.**
+    `sed 's|^\*/10 .*|&; cmd >/dev/null 2>&1|'` — the `&1` inside `2>&1` pasted the original line into
+    the middle of the result, producing `...state_backup_guard.sh >/dev/null 2>*/10 * * * * ...`. Had
+    it been left, cron would have run nonsense every ten minutes. Two compounding errors: the
+    verification printed a *truncated* view of the line (`cut -c1-200`) and a *count* of matches, both
+    of which passed while the line was corrupt. Restored from the backup taken immediately beforehand
+    (`crontab <file>`), confirmed byte-identical by `diff`, then applied with `awk`, where string
+    concatenation has no such metacharacter. The rule: when you mutate something that runs on a
+    schedule, take the backup first, and verify by reading **the whole artifact and its diff**, never
+    by counting how many lines match a pattern.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1851,6 +1862,27 @@ finding cannot be closed by a script.
 
 **Files affected:** none yet; recorded so the next reader does not mistake `device-check:
 verified-different` for a complete separation claim.
+
+### S2-015: a runbook instruction from this repository corrupted the host crontab
+
+**Discovered and closed:** 2026-10-27  
+**Finding.** RB-09 step 4 shipped in `ad1aa31` with `sed 's|^\*/10 …|&; … 2>&1|'`. Applying it rewrote
+line 12 of jol's crontab to `…state_backup_guard.sh >/dev/null 2>*/10 * * * * …` — `&` in a sed
+replacement is the matched text (measurement trap 18). Left in place it would have made cron execute a
+malformed command every ten minutes on a machine whose only backup discipline depends on that timer
+running.  
+**Detection, and why it was nearly missed.** The same command printed `line count 12` and
+`guard occurrences 1` — both "passing" — and truncated the line at 200 characters. A count and a
+truncated view are what hid it; `diff` against the pre-change backup is what showed it. The backup
+taken one statement earlier for rollback purposes is the only reason recovery was trivial.  
+**Resolution.** `crontab /tmp/crontab.pre-rb09-20261027T220403.txt`, verified byte-identical to the
+backup (`diff` empty, guard occurrences 0, final line read in full), then applied with `awk`, whose
+string concatenation has no metacharacter. Final state verified by whole-line read and by a diff showing
+exactly one changed line — the intended one — and by running the appended command under cron's own
+environment (`env -i PATH=… HOME=… sh -c 'cd … && scripts/state_backup_guard.sh'` → `RC=0`).  
+**Standing lesson for this repository.** Anything written as a command for a human or an agent to paste
+into live host state is production code: it needs a backup taken *before* the mutation, and its
+verification must read the entire artifact and its diff, not a count of matching lines.
 
 ---
 

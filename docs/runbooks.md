@@ -876,6 +876,13 @@ RB-08 produced a snapshot on a second disk; this makes it **findable when the ma
 at a desktop session** and **renewed when nobody remembers to**. Both steps change the host, not this
 repository, so they are written here to be reviewed and then executed by the operator.
 
+> **Status 2026-10-27:** steps 1–4 are **applied and verified** — `/dev/sdb1` mounted at
+> `/mnt/jol-backup`, generated unit present, recipient recorded, guard appended to the existing cron
+> line, and the guard run end-to-end (it forced a refresh, wrote a third snapshot with
+> `device-check: verified-different`, and returned **2**). **Step 5 is outstanding**: no copy of the
+> recovery identity is off this machine, so S2-014 remains open and `off-host custody` will keep
+> reporting NOT VERIFIED until that rehearsal is genuinely run elsewhere.
+
 **Why it matters:** `/media/jol/32f7e56a-…` exists because `udisks2` mounted it for a GUI login.
 `/etc/fstab` carries **no** entry for it, so after a reboot without autologin — or a crash recovery,
 or an SSH-only session — the path is absent and RB-08's Restore step finds no candidates and could
@@ -905,15 +912,17 @@ conclude the backups are gone.
    ```
    `findmnt` showing the root device instead of `/dev/sdb1` means it did **not** mount; do not proceed.
    Then tell systemd about the new line. `mount` reads `/etc/fstab` directly and succeeds without this,
-   which is exactly why it is easy to skip: `sudo systemctl daemon-reload` regenerates
-   `mnt-jol-backup.mount` from fstab. Without it the unit does not exist — verified here, where
-   `/run/systemd/generator/mnt-jol-backup.mount` was absent and `systemctl show` reported an empty
-   `SourcePath` after a successful manual mount. A missing unit still mounts at boot, but it means
-   `systemctl start`, dependencies and any later diagnosis have nothing to act on.
+   which is exactly why it is easy to skip. Check it with `systemctl show`, **not** `ls`: systemd escapes
+   the dash, so the unit file is `mnt-jol\x2dbackup.mount` and an unescaped `ls` is a permanent false
+   negative — one was cited here before it was checked.
    ```bash
    sudo systemctl daemon-reload
-   systemctl show -p SourcePath,UnitFileState mnt-jol\x2dbackup.mount --no-pager   # SourcePath should be /etc/fstab
+   systemctl show -p SourcePath,UnitFileState 'mnt-jol\x2dbackup.mount' --no-pager
    ```
+   Empty before the reload; `SourcePath=/etc/fstab` and `UnitFileState=generated` after it. A missing
+   unit still mounts at boot, but `systemctl start`, dependencies and any later diagnosis have nothing
+   to act on. (**Applied 2026-10-27:** `/dev/sdb1` is mounted at `/mnt/jol-backup`, `rw,noatime`, and
+   the unit is generated.)
 3. **Record the second recipient** so a scheduled run has something honest to encrypt to. The public
    key is not secret, but keeping it out of the crontab stops the custody topology leaking into every
    process listing.
@@ -929,15 +938,29 @@ conclude the backups are gone.
 4. **Append the refresh to the existing 10-minute guard line.** This estate's recorded rule is that new
    guards extend `check-project-mounts.sh`'s line rather than mint a timer, so that one line stays the
    whole story and a failure has one place to be looked for.
+   **Do not redirect it to a log file.** The guard already writes every line to journald through
+   `logger`, which is the convention `check-project-mounts.sh` documents in its own header — journald is
+   persistent on this host (`nvme0n1p5`) and survives the church-tree log directory being absent. An
+   early draft of this step used `>>/opt/jol/data/logs/state-backup-guard.log 2>&1`; that directory does
+   not exist on this host, so cron would have mailed a failure every ten minutes while the thing it was
+   meant to record went nowhere.
    ```bash
    crontab -l > /tmp/crontab.pre-rb09-$(date +%Y%m%dT%H%M%S).txt   # back up first
-   crontab -l | sed 's|^\*/10 \* \* \* \* /opt/jol/scripts/check-project-mounts.sh;.*|&; cd /opt/jol/repos/jol-control \&\& scripts/state_backup_guard.sh >>/opt/jol/data/logs/state-backup-guard.log 2>\&1|' | crontab -
-   crontab -l | tail -3
+   # Use awk, not sed. In a sed replacement, `&` means "the whole matched line", so the `&1` in
+   # `2>&1` pastes the original crontab line into the middle of the new one. That corrupted this
+   # host's crontab on the first attempt; `crontab <backup>` restored it byte-identically.
+   crontab -l | awk '{ if ($0 ~ /^\*\/10 \* \* \* \* \/opt\/jol\/scripts\/check-project-mounts\.sh;/) print $0 "; cd /opt/jol/repos/jol-control && scripts/state_backup_guard.sh >/dev/null 2>&1"; else print }' | crontab -
+   crontab -l | grep 'check-project-mounts'      # READ THE WHOLE LINE, do not trust a count
+   diff /tmp/crontab.pre-rb09-*.txt <(crontab -l)   # exactly one line, exactly as intended
+   journalctl --no-pager -t state-backup-guard -n 6               # read what it decided
    ```
+   Confirm the restore path before leaving it: `crontab /tmp/crontab.pre-rb09-<stamp>.txt` puts the
+   file back exactly as it was.
    The guard's three exit codes are the contract: **0** up to date or refreshed and proven, **1**
    refused (unmounted destination, same disk, no usable snapshot), **2** cannot-check (no second
    recipient, uncomputable clock). It exits 2 rather than writing a single-key backup and calling the
-   job green.
+   job green. Expect the routine outcome to be exit 2 with `off-host custody NOT verified` until
+   step 5 has been run once against a copy that is genuinely off this machine.
 5. **Rehearse a restore monthly** to turn the steady `RC=2` into a real `0`. Run this **on the machine
    holding the off-machine identity**, and note the shape: the decrypt is captured to a file and its
    exit status tested, never piped into a checksum. `age … | md5sum` prints
@@ -979,5 +1002,7 @@ and no step here deletes anything.
 
 **Not covered by RB-09:** the destination is still inside the same chassis, on a **rotational
 2012-era** drive whose SMART health is unverified (`smartctl` needs a password), so fire, theft,
-surge and whole-host loss remain open; and nothing yet warns when the guard returns 1 or 2 — the
-cron line writes to a log file, and no alert channel reads it.
+surge and the loss of the host remain open. And the guard's verdicts land in journald with **no alert
+channel reading them** — `journalctl -t state-backup-guard` is a pull, not a push, so an exit 1 for
+three weeks straight would be invisible until someone looks. Routing that to a notification is the next
+real improvement and is not done here.

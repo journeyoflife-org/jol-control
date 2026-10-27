@@ -75,7 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   incident where a forensic image re-animated a UUID and hijacked a `by-uuid` mount), which is why the
   recommended fstab source is the device path `/dev/sdb1` rather than its UUID, then append the refresh
   to the **existing** 10-minute guard line rather than minting a timer, and rehearse a restore monthly
-  to earn a real exit 0. Rollback for both steps is stated
+  to earn a real exit 0. Rollback for both steps is stated.
+  **Applied 2026-10-27**: `/dev/sdb1` is mounted at `/mnt/jol-backup` (`rw,noatime`, generated unit
+  present after `daemon-reload`), the guard is appended to the existing cron line, and it was run
+  end-to-end — it forced a refresh, wrote
+  `jol-control-terraform.tfstate.20261027T200234Z.age` (195,451 bytes, `device-check:
+  verified-different: state=nvme0n1 backup=sdb`), and returned **2** with `off-host custody NOT
+  verified`, which is the truthful steady state
 - Measurement traps 14 and 15 in `docs/drift-findings.md`. **14:** a heredoc and `</dev/null` on the
   same command silently disable the heredoc — the later stdin redirect wins, so `python3 -` read its
   *program* from `/dev/null`, ran nothing and exited 0; the check that looked like a byte-identity
@@ -303,10 +309,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty-input digest, then shred the plaintext), and **measurement trap 17** names the pattern: the
   commands that reached a human were the broken ones — three times over (`backup.sh` that did not exist,
   `PROOF=<that-nonce>`, `CHALLENGE_DIR=/tmp`) — while every committed script held its own bar
+- **S2-015 — an instruction in this repository corrupted the host crontab, and the checks meant to
+  catch it passed.** RB-09 step 4 shipped with
+  `sed 's|^\*/10 …|&; …state_backup_guard.sh >/dev/null 2>&1|'`; in a sed replacement `&` is the matched
+  text, so the `&1` of `2>&1` pasted the original line into the middle of the result. Applied to jol's
+  crontab it produced a malformed command cron would have run every ten minutes. The verification beside
+  it reported `line count 12` and `guard occurrences 1` — both green — and truncated the line at 200
+  characters; only a `diff` against the pre-change backup showed the damage. Restored byte-identically
+  from that backup, reapplied with `awk` (string concatenation has no metacharacters), then verified by
+  reading the whole line, by a diff with exactly one intended change, and by running the command under
+  cron's own minimal environment (`RC=0`). **Measurement trap 18**: never verify a live-state mutation by
+  counting matching lines
+- **RB-09 step 4's cron line also pointed at a log file that does not exist**
+  (`/opt/jol/data/logs/`, absent on this host), which would have made cron mail a failure every ten
+  minutes. Now `>/dev/null 2>&1` plus journald, matching the convention `check-project-mounts.sh`
+  documents in its own header — journald is persistent here and survives the church-tree log directory
+  being missing. RB-09 also states plainly that those verdicts are a **pull** (`journalctl -t
+  state-backup-guard`) with no alert channel reading them
 - **`RB-09`'s fstab step omitted `systemctl daemon-reload`.** `mount` reads `/etc/fstab` directly and so
-  succeeds anyway, which is why the omission stays invisible: verified on this host, after a working
-  manual mount of `/dev/sdb1` at `/mnt/jol-backup`, `/run/systemd/generator/mnt-jol-backup.mount` did not
-  exist and `systemctl show` returned an empty `SourcePath`. The step now reloads and checks for the unit
+  succeeds anyway, which is why the omission stays invisible. Evidence, before and after: `systemctl show
+  -p SourcePath,UnitFileState` returned **empty** for `mnt-jol\x2dbackup.mount` after a working manual
+  mount, and reports `SourcePath=/etc/fstab`, `UnitFileState=generated` once `daemon-reload` has run.
+  (An earlier version of this entry cited `ls /run/systemd/generator/mnt-jol-backup.mount` — that is a
+  permanent false negative, because systemd escapes the dash: the unit file is
+  `mnt-jol\x2dbackup.mount`. Query with `systemctl show`, not `ls`.) The step now reloads and checks the
+  unit
 - **S2-014 — the off-device backups are undecryptable in the scenario they were created for.** Measured
   with `findmnt --target` then `lsblk -no PKNAME`: the live state and **both** age private keys are on
   `nvme0n1`; the two `age`-encrypted snapshots are on `sdb`; no key exists on `sdb` or off the machine.
