@@ -18,7 +18,7 @@ set -uo pipefail
 umask 077
 
 REPO="${REPO:-/opt/jol/repos/jol-control}"
-DEST="${DEST:-/mnt/jol-backup/jol-state-backup}"
+DEST="${DEST:-/mnt/jol-backup/jol-control}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$HOME/.config/age/offdisk-recipient.txt}"
 MAX_AGE_H="${MAX_AGE_H:-24}"          # refresh if the newest snapshot is older than this
 LOG_TAG="${LOG_TAG:-state-backup-guard}"

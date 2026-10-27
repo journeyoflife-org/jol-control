@@ -222,6 +222,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note: removing the secret returns the job to an honest UNEVALUATED, never to green
 
 ### Changed
+- **The off-device backup destination moved to `/mnt/jol-backup/jol-control`, one directory per tree.**
+  `/mnt/jol-backup` is `root:root 755`, so creation needed one `sudo mkdir` + `chown jol:jol` + `chmod 700`
+  (run by the operator); the three consumers (`state_backup_guard.sh`, `backup_status.sh`,
+  `offhost_rehearsal.sh`) and the runbook paths were renamed with literal `sed` — no `&` in the
+  replacement, because that is measurement trap 18. The AGE-3 identity copy moved with it (`keys/` under
+  the new directory), verified byte-identical by `sha256sum` after the `mv` and re-confirmed to decrypt
+  the new snapshot to `b25b8821…`. **What this does *not* buy:** both trees run cron as the same user
+  `jol`, so no directory mode ever separated them — the name and lineage pinning of S2-018 is the control
+  and holds regardless. The three older snapshots in `jol-state-backup` are left in place, unread by any
+  tool here, and rollback is `DEST=/mnt/jol-backup/jol-state-backup <script>`: no path is baked into the
+  crontab, so reverting the schedule means reverting this commit. Case 51 pins the default at source
+  level (same reasoning as case 20's `umask 077`) — the cron line passes no `DEST`, so the script's
+  default *is* the production destination, and a silent fallback would write onto the root filesystem of
+  an unmounted `nofail` volume
 - `tests/test_backup_gate.sh` and `tests/test_retire_gate.sh` no longer toggle errexit. Both declare
   `set -uo pipefail` so every case runs and is counted, but wrapped their timeouts in
   `set +e … ; rc=$?; set -e`, which turned errexit **on for the rest of the file**. The backup suite then
@@ -330,7 +344,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
   outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
-  `/mnt/jol-backup/jol-state-backup`, the destination RB-08/RB-09 chose for our state. Every consumer
+  `/mnt/jol-backup/jol-control`, the destination RB-08/RB-09 chose for our state. Every consumer
   picked "newest `*.age`", so its file satisfied our guard: measured live, `OK: newest snapshot is 0h old
   (< 24h) - nothing to do` exit **0** while our own snapshot was hours old, and `make backup-status`
   printed the foreign file as ours. A planted 2099 mtime also passed as `newest snapshot is -632713h old

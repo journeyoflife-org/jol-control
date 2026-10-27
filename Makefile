@@ -31,7 +31,7 @@ test: ## Run gate self-tests (plan + state + drift + agents-table + backup + ret
 # its test is tests/test_backup_gate.sh; this target only supplies the arguments.
 backup-state: ## Back up terraform.tfstate off-device per runbooks.md RB-08 (needs DEST= and a recovery recipient)
 	@test -n "$(DEST)" || { \
-		echo "usage: make backup-state DEST=/media/<other-disk>/jol-state-backup RECOVERY_PUB=age1..."; \
+		echo "usage: make backup-state DEST=/mnt/jol-backup/jol-control RECOVERY_PUB=age1..."; \
 		echo "   or, to also prove the second custody path while both identities are on this host:"; \
 		echo "       make backup-state DEST=... RECOVERY_KEY=~/.config/age/<recovery-identity-file>"; \
 		echo "DEST must be on a DIFFERENT block device than terraform.tfstate (see RB-08's device table)."; \

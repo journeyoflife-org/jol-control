@@ -20,7 +20,7 @@ umask 077
 
 REPO="${REPO:-/opt/jol/repos/jol-control}"
 STATE="${STATE:-$REPO/terraform.tfstate}"
-DEST="${DEST:-/mnt/jol-backup/jol-state-backup}"
+DEST="${DEST:-/mnt/jol-backup/jol-control}"
 KEYDIR="${KEYDIR:-$HOME/.config/age}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$KEYDIR/offdisk-recipient.txt}"
 PENDING="$KEYDIR/offhost-attestation.pending"

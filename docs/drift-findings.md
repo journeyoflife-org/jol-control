@@ -525,6 +525,16 @@ them, and neither changed the enforcement state of anything.
     results. Use `mkdir -p` plus `chmod`. The same class produced a false `OK` from `sha256sum -c` on an
     absolute-path manifest (S2-017): the source files were still at home, so it verified the originals
     and reported success for a copy that was never examined.
+22. **A command handed to a human may contain a half I invented and never ran.** The instruction to
+    separate the backup destination was:
+    `mkdir -p /mnt/jol-backup/jol-control && chmod 700 /mnt/jol-control-backup-staging 2>/dev/null; rmdir /mnt/jol-control-backup-staging`
+    The first clause failed honestly (`Permission denied`, `/mnt/jol-backup` is `root:root 755`) — but the
+    second half referenced a directory that had never existed on any machine, existed only in my sentence,
+    and produced a `No such file or directory` that looked like part of the failure rather than a
+    fabrication. This is trap 17 with a new shape: not a wrong path, an *invented* one, dressed as
+    cleanup. The rule it implies: every command line shipped to an operator must be executed verbatim in
+    this session first, and any clause whose purpose cannot be stated in one sentence is a clause that
+    should not be in the line at all.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1990,13 +2000,15 @@ not satisfied by an attestation of another *machine*.
 ### S2-018: another project's backup passed this project's freshness gate
 
 **Discovered:** 2026-10-27 22:42, incidentally — while re-reading the crontab to confirm a line count  
-**Status:** CLOSED in code (guard, status pull and rehearsal all pin the snapshot identity now); the host
-cleanup is **open** and belongs to the operator.  
+**Status:** CLOSED in code (guard, status pull and rehearsal all pin the snapshot identity now); the
+destination was split per tree on 2026-10-27 (`/mnt/jol-backup/jol-control`), which is hygiene — the
+pinning above is the control, because **both trees run cron as the same user `jol`**, so no directory
+mode ever separated them.  
 **Severity:** S1-shaped behaviour in an S2 component: a backup control that reports itself satisfied by
 someone else's artefact is worse than no control, because it stops the refresh that would have saved us.
 
 **What happened.** A thirteenth line appeared in jol's crontab, added outside this session by the
-`jolarca` tree: `17 4 * * * cd /opt/jolarca/repos/jolarca-control && BACKUP_DEST=/mnt/jol-backup/jol-state-backup …`.
+`jolarca` tree: `17 4 * * * cd /opt/jolarca/repos/jolarca-control && BACKUP_DEST=/mnt/jol-backup/jol-control …`.
 That destination is the one RB-08/RB-09 chose for `terraform.tfstate`. Its output landed beside mine:
 three `terraform.tfstate.s17.*.age` files (100,670 bytes each), newest written 22:42 — minutes before
 this was noticed.

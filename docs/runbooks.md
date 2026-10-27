@@ -353,7 +353,7 @@ Measured on this host, 2026-10-27:
 |---|---|---|---|
 | `/opt/jol/repos/jol-control/terraform.tfstate` | `nvme0n1p8` | NVMe SSD | — (this is the reference) |
 | `/opt/jol/backup/tfstate/*.age` | `nvme0n1p6` | **the same NVMe** | **yes** — one die held the inventory and every copy of it |
-| `/media/jol/32f7e56a-…/jol-state-backup` | `sdb1` | Seagate **ST9320423AS**, 298 G, SATA, **rotational** (`ROTA=1`) | **no — a different disk, same chassis** |
+| `/media/jol/32f7e56a-…/jol-control` | `sdb1` | Seagate **ST9320423AS**, 298 G, SATA, **rotational** (`ROTA=1`) | **no — a different disk, same chassis** |
 
 So `sdb1` closes the measured gap, and `backup_state.sh` now *verifies* it rather than trusting the
 operator: it resolves the block device under both paths (`findmnt --target` → `lsblk -no PKNAME`) and
@@ -385,7 +385,7 @@ different block device.
    genuinely a different device before treating a failure as something else — the script enforces the
    second point, but the first is what the operator sees first:
    ```bash
-   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
    ls -ld "$D" 2>&1 || udisksctl mount -b /dev/sdb1
    lsblk -no PKNAME "$(findmnt -no SOURCE --target "$D")"   # expect sdb, not nvme0n1
    ```
@@ -411,7 +411,7 @@ different block device.
    extracted from this fence, and case 19 of `tests/test_backup_gate.sh` fails if the two diverge. Run
    it directly, or through `make backup-state`:
    ```bash
-   make backup-state DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
+   make backup-state DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control \
                      RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj
    ```
    It is reproduced here because a runbook that only points at a file nobody can review is not
@@ -568,7 +568,7 @@ different block device.
    `cat "$DEST"/*.info` finds `DEST` empty unless you `export` it first. That exact mistake produced
    `cat: '/*.info': No such file or directory` in a real session:
    ```bash
-   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
    export DEST
    RECOVERY_PUB="$(cat ~/.config/age/offdisk-recipient.txt)" scripts/backup_state.sh
    ls -l "$DEST"; cat "$DEST"/*.info
@@ -591,7 +591,7 @@ different block device.
    # and a nonce recovered from that disk proves nothing about a second copy. The gate refuses both
    # cases - same disk, and device unresolvable - because this deletes something unrecoverable.
    make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
-                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
    ```
    Phase 1 writes a challenge encrypted to that recipient, prints the nonce, and stores the expected
    answer **only as a hash**, so no local file can hand you the answer; nothing is destroyed. It also
@@ -601,7 +601,7 @@ different block device.
    literally produced `bash: syntax error near unexpected token 'newline'` in a real run:
    ```bash
    make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
-                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
+                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control \
                    PROOF=<the nonce printed on the other machine>
    ```
    `tests/test_retire_gate.sh` holds 15 cases: the proof is required, refusals leave the identity in
@@ -801,7 +801,7 @@ not just a backup you hope is right.
    directory simply is not there. Concluding "the backups are gone" from an unmounted path is how a
    perfectly recoverable inventory gets rebuilt by hand.
    ```bash
-   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control
    ls -la /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age
    if [ -d "$D" ]; then
      ls -la "$D"/jol-control-terraform.tfstate.*.age
@@ -824,7 +824,7 @@ not just a backup you hope is right.
    ```bash
    W=$(mktemp -d); chmod 700 "$W"; umask 077
    for f in /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age \
-            /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup/jol-control-terraform.tfstate.*.age; do
+            /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-control/jol-control-terraform.tfstate.*.age; do
      [ -f "$f" ] || continue
      age -d -i ~/.config/age/state-backup-key.txt "$f" > "$W/out.json" 2>/dev/null || continue
      echo "$(basename "$f")  bytes=$(stat -c%s "$W/out.json")  md5=$(md5sum "$W/out.json" | cut -d' ' -f1)"
@@ -915,7 +915,7 @@ conclude the backups are gone.
    echo '/dev/sdb1  /mnt/jol-backup  ext4  defaults,nofail,noatime  0  2' | sudo tee -a /etc/fstab
    sudo mkdir -p /mnt/jol-backup && sudo mount /mnt/jol-backup
    findmnt -T /mnt/jol-backup -o SOURCE,TARGET,FSTYPE,OPTIONS            # SOURCE must be /dev/sdb1
-   ls -1 /mnt/jol-backup/jol-state-backup/                              # the existing snapshots are here
+   ls -1 /mnt/jol-backup/jol-control/                              # the existing snapshots are here
    ```
    `findmnt` showing the root device instead of `/dev/sdb1` means it did **not** mount; do not proceed.
    Then tell systemd about the new line. `mount` reads `/etc/fstab` directly and succeeds without this,
@@ -936,7 +936,7 @@ conclude the backups are gone.
    ```bash
    umask 077; mkdir -p ~/.config/age
    printf '%s\n' 'age1<the-new-off-host-recipient>' > ~/.config/age/offdisk-recipient.txt
-   DEST=/mnt/jol-backup/jol-state-backup \
+   DEST=/mnt/jol-backup/jol-control \
      RECOVERY_PUB="$(cat ~/.config/age/offdisk-recipient.txt)" scripts/backup_state.sh; echo "RC=$?"
    ```
    Expect **`RC=2`** — written, off-host custody not verified — which is the truthful steady state for
@@ -1017,7 +1017,7 @@ backup-status` is the interim: one pull, 0/1/2, that re-derives the disk separat
 trusting the sidecar and refuses to report anything it cannot see as a pass.
 
 **The destination is shared — check whose snapshot you are looking at.** Since 2026-10-27 the jolarca
-tree also writes its state backups into `/mnt/jol-backup/jol-state-backup` (`terraform.tfstate.s17.*.age`,
+tree also writes its state backups into `/mnt/jol-backup/jol-control` (`terraform.tfstate.s17.*.age`,
 via its own cron line). Selecting "newest `*.age`" therefore let **another project's** backup satisfy this
 repository's freshness gate: the guard logged `nothing to do` and exited 0 while our own snapshot was
 hours old (finding **S2-018**). Three rules now hold in every consumer here — the snapshot name is pinned
@@ -1026,6 +1026,26 @@ sidecar's `lineage` must equal the live state's or the snapshot is not treated a
 read that lineage field **before** you overwrite anything; a correctly named file from a different
 inventory restores a different organization. Separating the two directories (one per tree) is the durable
 fix and is the operator's call, not a script's.
+
+**Done 2026-10-27 — the destination is now per-tree.** Everything here writes to
+`/mnt/jol-backup/jol-control` (mode 700, `jol:jol`), created with one `sudo mkdir` + `chown`, because
+`/mnt/jol-backup` itself is `root:root 755`. Note what did **not** change: both trees run cron as the
+same user `jol`, so the old directory's `700` mode never separated them — the name and lineage pinning
+above is the control, the directory split is tidiness. The AGE-3 identity copy moved with it
+(`/mnt/jol-backup/jol-control/keys/`, verified byte-identical by `sha256sum` after the `mv`, and
+re-confirmed to decrypt the new snapshot to `b25b8821…`).
+
+The three earlier snapshots in `/mnt/jol-backup/jol-state-backup` are **not deleted and not read**: no
+tool here globs that path any more, and they remain decryptable with the same keys. **Rollback** of the
+move is one environment variable, because no default is baked into a crontab line:
+
+```bash
+DEST=/mnt/jol-backup/jol-state-backup bash scripts/state_backup_guard.sh      # guard
+DEST=/mnt/jol-backup/jol-state-backup bash scripts/backup_status.sh           # status pull
+```
+
+The scheduled guard reads the script's own default, so rolling the cron job back means reverting
+`scripts/state_backup_guard.sh` — the `git revert` of this change, not an edit to `/var/spool/cron`.
 
 ### The off-machine rehearsal, as a challenge round-trip
 

@@ -500,6 +500,23 @@ else
   skip=$((skip+5)); echo "  SKIP   guard or a real terraform.tfstate absent - 5 identity cases not evaluated"
 fi
 
+# 51: the scheduled destination is a source-level fact, not a hope. The cron line runs
+# `scripts/state_backup_guard.sh` with no DEST, so whatever this file defaults to IS the production
+# destination - which is how a silent fallback would land backups on the root filesystem of an
+# unmounted `nofail` volume. Pinned at source level for the same reason case 20 pins `umask 077`: the
+# suite cannot detect its absence behaviourally.
+if [ -f "$GUARD" ] && [ -f "$ST" ] && [ -f "$RH" ]; then
+  NEWDEST='/mnt/jol-backup/jol-control'
+  bad_default=''
+  for f in "$GUARD" "$ST" "$RH"; do
+    grep -q "DEST=\"\${DEST:-$NEWDEST}\"" "$f" || bad_default="$bad_default $(basename "$f")"
+  done
+  if [ -n "$bad_default" ]; then fail=$((fail+1)); echo "  FAIL  51 default DEST not pinned in:$bad_default"
+  elif grep -rl 'DEST="${DEST:-/mnt/jol-backup/jol-state-backup}"' "$REPO/scripts" >/dev/null 2>&1; then
+    fail=$((fail+1)); echo "  FAIL  51 a script still defaults to the shared legacy directory"
+  else pass=$((pass+1)); echo "  ok    51 all three consumers default to $NEWDEST (and none to the legacy path)"; fi
+fi
+
 echo "---"
 echo "backup-gate self-test: $pass passed, $fail failed, $skip skipped"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail backup-gate violation(s)"; exit 1; fi
