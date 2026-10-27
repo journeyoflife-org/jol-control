@@ -1003,6 +1003,47 @@ and no step here deletes anything.
 **Not covered by RB-09:** the destination is still inside the same chassis, on a **rotational
 2012-era** drive whose SMART health is unverified (`smartctl` needs a password), so fire, theft,
 surge and the loss of the host remain open. And the guard's verdicts land in journald with **no alert
-channel reading them** — `journalctl -t state-backup-guard` is a pull, not a push, so an exit 1 for
-three weeks straight would be invisible until someone looks. Routing that to a notification is the next
-real improvement and is not done here.
+channel that could carry them** — this estate's whole notification chain is non-functional (finding
+**S2-016**: no alertmanager process, a literal `PLACEHOLDER` Slack URL, a null-MX mail domain,
+Prometheus scraping only itself), so a run of `1`s would be invisible until someone looked. `make
+backup-status` is the interim: one pull, 0/1/2, that re-derives the disk separation instead of
+trusting the sidecar and refuses to report anything it cannot see as a pass.
+
+### The off-machine rehearsal, concretely
+
+Step 5 is the one action that closes S2-014, so it is spelled out with the real file names rather than
+placeholders — the last three commands written for this runbook with angle brackets or a missing file in
+them each produced a failure the operator had to interpret (`RC=127`, `bash: syntax error near
+unexpected token`, a false md5).
+
+**Here**, stage the three files anywhere outside the repository:
+```bash
+cd /mnt/jol-backup/jol-state-backup
+mkdir -p /tmp/offhost-packet && cp -p jol-control-terraform.tfstate.20261027T200234Z.age \
+  jol-control-terraform.tfstate.20261027T200234Z.age.info keys/state-recovery-20261027-b.txt /tmp/offhost-packet/
+sha256sum /tmp/offhost-packet/* > /tmp/offhost-packet/SHA256SUMS
+cat /tmp/offhost-packet/SHA256SUMS
+```
+Carry `/tmp/offhost-packet` to the other machine by whatever means is not this machine, verify the
+checksums there, then run **this** on that machine — it takes the identity path as one argument and
+refuses if it is wrong, so there is nothing to substitute and nothing to get wrong:
+```bash
+ID=./state-recovery-20261027-b.txt SNAP=./jol-control-terraform.tfstate.20261027T200234Z.age \
+  bash -c 'test -s "$ID" || { echo "FAIL: identity not at $ID"; exit 2; }
+           test -s "$SNAP" || { echo "FAIL: snapshot not at $SNAP"; exit 2; }
+           want=$(sed -n "s/^md5  *: //p" "$SNAP.info")
+           age --decrypt -i "$ID" "$SNAP" > /tmp/offhost-decrypt.json 2>/tmp/offhost-decrypt.err
+           rc=$?; sz=$(stat -c%s /tmp/offhost-decrypt.json 2>/dev/null || echo 0)
+           got=$(md5sum /tmp/offhost-decrypt.json 2>/dev/null | cut -d" " -f1)
+           shred -u /tmp/offhost-decrypt.json /tmp/offhost-decrypt.err 2>/dev/null
+           if   [ "$rc" -ne 0 ]; then echo "FAIL: decrypt exited $rc"; exit 1
+           elif [ "$sz" -lt 1000 ]; then echo "FAIL: $sz bytes - nothing decrypted"; exit 1
+           elif [ "$got" = d41d8cd98f00b204e9800998ecf8427e ]; then echo "FAIL: md5 of empty input"; exit 1
+           elif [ "$got" != "$want" ]; then echo "FAIL: got $got, sidecar says $want"; exit 1
+           else echo "PASS: custody proven off-host; md5=$got matches the sidecar, plaintext shredded"
+           fi'
+```
+A `PASS` there is the evidence S2-014 asks for: the copy that decrypts is not on this machine, and no
+disk failure here leaves the inventory unreadable. Record the date, the snapshot name and that md5 in
+this register — and only then consider `make retire-key` for the local copy, which it will refuse until
+a copy on another **disk** proves the same thing.

@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `scripts/backup_status.sh` and `make backup-status` — one pull that answers whether the state backup
+  is fresh, provably on another physical disk (re-derived with `findmnt`/`lsblk`, not merely read back
+  from the sidecar), and whether off-machine custody exists, with 0/1/2 semantics. **The normal answer
+  today is 2**, deliberately: no check running here can prove a copy exists elsewhere, and reporting
+  that as a pass is the failure mode this thread kept hitting. It exists because the estate has no
+  working push channel (S2-016), so an alert would have been theatre
+- `docs/runbooks.md` RB-09 gains a concrete off-machine rehearsal packet: exact file names, a
+  `sha256sum` manifest, and a self-contained block taking no placeholders — it validates the identity
+  path, the decrypt exit status, the output size, the empty-input digest and the sidecar md5, then
+  shreds the plaintext. **Verified against adversarial inputs, not just the happy path**: a *wrong* age
+  key placed at the expected path yields `FAIL: decrypt exited 1` / exit 1, a garbage file the same,
+  and restoring the real key returns `PASS` / exit 0 with no plaintext residue. Earlier commands in this
+  documentation were handed over untested three times and each produced a failure the operator had to
+  decode (`RC=127`, a shell syntax error, a false md5)
 - `make fmt-check` — non-mutating Terraform formatting STOP gate (`terraform fmt -check
   -recursive`; exit 0 clean / 3 unformatted). `make lint` now depends on it instead of on `fmt`,
   so the documented verification command no longer rewrites files as a side effect

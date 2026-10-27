@@ -37,6 +37,7 @@ documents cite them. In numeric order:
 | S2-013 | A recovery identity was shredded before any off-host copy existed, on instructions written by this project's own runbook | open; gate built, key must be re-minted |
 | S2-014 | Both private keys sat on the device the off-device backups were made to survive; an interim key copy on `sdb` fixes that and leaves every disk holding a key beside its ciphertext | open; needs an off-machine key copy |
 | S2-015 | A RB-09 cron-editing instruction from this repository corrupted jol's crontab; caught in-session and restored | closed; instruction replaced and verified |
+| S2-016 | The estate's alerting chain is non-functional end to end, so no scheduled failure can notify anyone | open; `make backup-status` is the interim pull |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -1883,6 +1884,41 @@ environment (`env -i PATH=… HOME=… sh -c 'cd … && scripts/state_backup_gua
 **Standing lesson for this repository.** Anything written as a command for a human or an agent to paste
 into live host state is production code: it needs a backup taken *before* the mutation, and its
 verification must read the entire artifact and its diff, not a count of matching lines.
+
+### S2-016: there is no working push channel, so a scheduled failure notifies nobody
+
+**Discovered:** 2026-10-27  
+**Status:** OPEN. Not fixable from this repository. `make backup-status` is the interim: a pull that is
+strict, cheap, and honest about exit 2.  
+**Severity:** S1 for monitoring claims generally — every "we will be alerted" statement in this estate is
+currently false, not merely untested.
+
+**Measured, on this host, 2026-10-27.** An offer was made to add failure notification for the state
+backup guard. Checking whether that was possible first:
+
+| Link | Evidence | Verdict |
+|---|---|---|
+| alertmanager process | `ss -ltn` shows only `*:9090`; nothing on `:9093`; `docker ps -a` lists no alert container | not running |
+| Slack receiver | `alertmanager.yaml`: `api_url: https://hooks.slack.com/services/PLACEHOLDER` | literal placeholder |
+| `security-email` receiver | `dig +short MX journeyoflife.org` → `0 .` (RFC 7505 null MX) | hard-bounces; S1-003, still true |
+| PagerDuty receiver | configured, but with no alertmanager to receive anything | unreachable |
+| what Prometheus scrapes | `job_name: prometheus` → `localhost:9090`; one `node-exporter` target `10.30.30.10:9100` labelled `llm-prod-lt01` | not this host, and no alert pipeline behind it |
+| any webhook in local scripts | grep for `ntfy.sh\|hooks.slack.com\|webhook\|curl -X POST` over `/opt/jol/scripts` and this repo's `scripts/` | none |
+
+**Consequence.** `state_backup_guard.sh` reports every run to journald, and journald is a **pull**:
+`journalctl -t state-backup-guard`. A guard returning 1 every ten minutes for a month would be
+invisible until someone thought to look — the identical weakness already recorded for `mount-guard`,
+whose FAIL lines went unread while a volume was being destroyed. Pointing the guard at alertmanager
+would have produced a green-looking config and no delivery, which is exactly the overstated control this
+repository's §6 exists to refuse.
+
+**What would make a real channel.** Any one of: run alertmanager and give it a non-placeholder receiver;
+adopt a push service reachable from cron (an `ntfy.sh` topic or similar) and store its token in the
+secret store with an `SECRETS_INVENTORY.md` row; or fix S1-003 so a mail address actually accepts mail.
+Until then the honest design is the pull plus a verdict that refuses to look like a pass.
+
+**Files affected:** `scripts/backup_status.sh`, `Makefile` (`backup-status`), `AGENTS.md` §3,
+`docs/runbooks.md` RB-09.
 
 ---
 

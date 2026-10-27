@@ -2,7 +2,7 @@
 # JOL Control Plane — Makefile
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test backup-state retire-key clean init list-repos count-repos
+.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test backup-state backup-status retire-key clean init list-repos count-repos
 
 .DEFAULT_GOAL := help
 
@@ -37,6 +37,9 @@ backup-state: ## Back up terraform.tfstate off-device per runbooks.md RB-08 (nee
 		echo "DEST must be on a DIFFERENT block device than terraform.tfstate (see RB-08's device table)."; \
 		exit 1; }
 	DEST='$(DEST)' RECOVERY_PUB='$(RECOVERY_PUB)' RECOVERY_KEY='$(RECOVERY_KEY)' bash scripts/backup_state.sh
+
+backup-status: ## Is the state backup fresh, on another disk, and is custody proven off-machine? (0 ok / 1 act / 2 unevaluated)
+	bash scripts/backup_status.sh
 
 # Proof before destruction. A recovery identity was shredded on 2026-10-27 with no off-host copy
 # because the runbook said "verify first" in prose and the shred was a standalone command line.
