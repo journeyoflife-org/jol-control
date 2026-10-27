@@ -48,11 +48,13 @@ this organization is complete until S1-007 is closed.
 |---|---|---|
 | `make help` | List targets | |
 | `make validate` | Validate 40 repo YAML definitions | Expected: `PASSED — 40 repo definitions validated successfully.` |
-| `make test` | Self-tests for all four gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 16 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate` |
+| `make test` | Self-tests for all four gates | Expected: `PASSED — 11 plan-gate`, `PASSED — 23 state-gate`, `PASSED — 11 drift-gate`, `PASSED — 9 agents-table-gate` |
 | `make state-gate` | STOP gate: does the state on disk account for the config? | 0 safe / 1 refused / 2 cannot-check |
 | `make agents-gate` | STOP gate: is section 2 below still a well-formed table with evidence per row? | 0 pass / 1 violation / 2 cannot-check. Runs in `apply.yml`'s `Dev — Validate` on every push to `main` (`AGENTS.md` was added to that workflow's `paths:` filter for exactly this reason) and in `compliance-scan.yml` on pull requests and the weekly schedule |
 | `make compliance` | Full compliance posture check | Writes `compliance-report.json` |
-| `make fmt` / `make lint` | `terraform fmt` + validation | |
+| `make fmt-check` | STOP gate: is the Terraform formatting clean? **Read-only** | `terraform fmt -check -recursive`. Exit 0 clean / 3 unformatted |
+| `make lint` | `make fmt-check` + `make validate`, **non-mutating** | Was `fmt validate`; `fmt` rewrites files in place, so the documented verification command used to edit a `lifecycle` block holding `prevent_destroy` without asking. See `docs/drift-findings.md` S2-008 |
+| `make fmt` | `terraform fmt -recursive` | **MUTATES the working tree.** Never a verification step — run `make fmt-check` to inspect |
 | `terraform validate` | Config validity | Expected: `Success! The configuration is valid.` |
 | `make plan` | Real plan (needs `GITHUB_TOKEN`, refreshes state) | Writes `tfplan` |
 | `terraform plan -refresh=false -input=false -out=tfplan` | Offline plan against local state | Verified to work with **no** token; shows config-vs-state deltas |

@@ -18,12 +18,22 @@ documents cite them. In numeric order:
 | S1-006 | Shared workflow library scanned its own definition repo; one workflow uncallable | fixed; consumer proof owed |
 | S1-007 | `.github` PRs report `blocked` with nothing left to satisfy | open; escalated, needs merge box or Support |
 | S1-008 | Hand-set rulesets re-impose the review controls `solo_mode` removed, 19 of 40 repos | open; invisible to Terraform and drift |
+| S1-009 | Seven governance-tier repositories have branch protection in state and none on GitHub | open; blocks no apply today, distorts every future one |
+| S1-010 | The CI secret-scan job could not fail, and its tier matrix scanned one tree four times | fixed locally; CI proof owed |
+| S1-011 | `state_gate.py` crashed on any directory holding more than one state file | fixed |
+| S1-012 | `plan.yml`'s destroy/replace gate can never pass in CI, so every `*.tf` PR was red | fixed; CI proof owed |
 | S2-001 | Required status check contexts do not match reality | fixed |
 | S2-002 | Teams referenced in config do not exist | fixed (bindings still decorative) |
 | S2-003 | State is local, not remote | open, RA-03 accepted |
 | S2-004 | AGENTS.md cited a resolved state mismatch as current truth | fixed |
 | S2-005 | Git identity migration: authorship needs a verified account email | closed by decision |
 | S2-006 | Dependabot labels referenced by jol-hub do not exist | open |
+| S2-007 | state-gate's stale-copy detection missed the one copy that diverged | fixed |
+| S2-008 | `make lint` modified the working tree, editing a `prevent_destroy` block | fixed |
+| S2-009 | `terraform fmt -check` fails at HEAD, and no CI job enforces formatting | fixed (format); CI enforcement still absent |
+| S2-010 | Two clones of repositories no longer in the organization sit in the fleet tree | open; owner decision |
+| S2-011 | This register's index omitted S1-009 | fixed |
+| S2-012 | An agent destroyed the live state file; recovery depended on an undocumented backup | recovered; automation still absent |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -386,6 +396,14 @@ them, and neither changed the enforcement state of anything.
    own `.github/workflows/compliance-check.yml` defining the job "Document control & ADR/RoPA
    coverage", and `grep -rn 'journeyoflife-org/.github/.github/workflows'` finds no library call
    in `jol-docs` or `jol-hub`. The ten real spokes have not run CI since 2026-09-22.
+9. **`$?` after a pipeline is the status of the LAST stage, not of the command you care about.**
+   `gitleaks detect … | tail -30; echo "RC=$?"` printed `RC=0` while the line above it said
+   `leaks found: 10`. The exit code belonged to `tail`. This exact shape recurred twice in one
+   session — once in a suggested diagnostic command and once in a CI step (`hits=$(grep … | cut …)`
+   then `rc=$?`, which captured `cut`), and in the CI case it would have made a security scan fail
+   on every single run. Any gate that must distinguish pass / refuse / cannot-check has to read
+   `${PIPESTATUS[0]}` or run the command without a pipe. A green exit code from a pipeline is
+   evidence about `tail`, not about the scanner.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -702,6 +720,174 @@ wrong conclusion into the record.
 all present.  
 **Files affected:** `journeyoflife-org/.github` ruleset `protect-main` (id 22978013), not
 declared in Terraform
+
+### S1-010: The CI secret-scan job could not fail, and its tier matrix scanned one tree four times
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED locally; **CI proof owed** — the corrected job has not run on a runner yet  
+**Finding:** two defects in one job of `.github/workflows/compliance-scan.yml`.
+
+1. The `security-scan` job carried `strategy.matrix.tier: [governance, platform, devops, site]`
+   and **no step ever referenced `matrix.tier`**. `actions/checkout` with no `repository:`
+   argument checks out `jol-control` only, so the matrix ran the identical four-pattern grep
+   against the identical tree four times. Run `40072669078` lists all four jobs —
+   `Repository Security Scan (governance)`, `(platform)`, `(devops)`, `(site)` — evidence that
+   the duplication really executed rather than being collapsed.
+2. The step's terminal action on a match was `echo "::warning::Potential secrets detected in
+   code — review immediately"`. A warning annotation does not fail a job, and the script had no
+   `exit 1` on any path. A detected credential therefore produced a yellow note and a **green**
+   job.
+
+**Impact:** the only secret-pattern control inside this repository was structurally incapable of
+blocking anything, while its name and its four-tier matrix implied fleet-wide coverage it never
+had. For SOC 2 / ISO 27001 evidence this is worse than an absent control: the run history shows a
+passing "Repository Security Scan" on every pull request and every weekly schedule, so an auditor
+reading the log sees a control that was never able to say no.
+
+**One hypothesis refuted while measuring this.** I expected the warning to have been firing
+silently on every run. It was not: run `40072669078`'s scan step printed only
+`Scanning for common secret patterns...` and no warning line, so at `26132e8` the four patterns
+genuinely match zero tracked files. The defect is the *inability to fail*, not a suppressed alarm.
+Recording the difference matters, because "it has been alerting and we ignored it" and "it could
+never alert" call for different remediation.
+
+**Resolution:** the matrix is removed rather than left decorative. The step now distinguishes
+three outcomes, following the exit-code discipline `drift-detection` already uses in this file —
+a match emits `::error::` and exits 1; a grep that could **not run** (exit ≥ 2) emits its own
+`::error::` and exits 1, because an unexecuted scan must never be reported as a clean one; no
+match writes a PASSED step summary. Only `file:line` is printed, never the matched text: this
+repository is **public**, so its Actions logs are publicly readable and echoing a match would
+publish the credential being reported. `--exclude-dir` for `.git`, `.venv`, `.terraform`,
+`node_modules`, `__pycache__` makes a local reproduction agree with CI instead of diverging on
+third-party code.
+
+**Regression test:** the step's `run:` block was extracted verbatim from the YAML with
+`yaml.safe_load` and executed, rather than read. Clean tree → `RC=0`,
+`Secret scan: PASSED`. A temporary tree carrying a **synthetic** `ghp_` token of 36 characters and
+a synthetic `AKIA` key → `RC=1`, both named by `file:line`, neither value printed. Testing also
+caught a defect this session introduced: a comment in the workflow quoting an example password
+assignment was matched by pattern 4, which would have made CI permanently red on the first run.
+The comment is reworded and the hazard is now recorded inline for future editors — the file is
+scanned by its own patterns.
+
+**Residual:** this is a four-pattern grep, not a detector. `gitleaks` 8.30.1 **is** installed on
+the control-plane host (`/home/jol/.local/bin/gitleaks`), and a local `gitleaks detect --no-git`
+over this repository reports 10 findings, all confirmed false positives: nine are `"index_key":`
+lines in gitignored, untracked `terraform.tfstate*` files, where the `for_each` key is a
+repository *name* and `index_key` merely contains the substring `key`; the tenth is
+`docs/drift-findings.md:775`, a **GPG public key ID**, public by design. No secret exposure was
+found. The organization's shared library does have a real Gitleaks job
+(`.github/.github/workflows/security-scan.yml`, `gitleaks/gitleaks-action@ff98106`, pinned by
+SHA), but that file declares no `workflow_call:` — only `push`, `pull_request`, `schedule`,
+`workflow_dispatch` — so it cannot be called, the same defect class as S1-006 item 2 and still
+open there. Wiring a real detector is a recommendation, deliberately not done in this change.
+
+**Files affected:** `.github/workflows/compliance-scan.yml`
+
+### S1-011: `state_gate.py` crashed on any directory holding more than one state file
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED  
+**Finding:** `worst_state(paths, forced=None)` had no `root` parameter, but its per-file listing
+executed `f.relative_to(root)`. The single call site is
+`worst_state([sp] if a_state else own, root)`, so `root` was passed into `forced` and the body
+resolved `root` as a **module global that does not exist** — `NameError`. The listing is guarded by
+`if len(results) > 1`, so it ran only for a directory holding more than one local state file:
+`terraform.tfstate` alongside a `terraform.tfstate.d/<ws>/terraform.tfstate`, or two workspaces.
+Every fixture in `tests/test_state_gate.sh` had exactly one state file, so 16 passing tests sat on
+top of a path that always crashed.
+
+**Pre-existing, not introduced by this session:** `git show HEAD:scripts/state_gate.py` written to
+a temp file and run against a two-state fixture reproduces
+`UNEVALUATED: internal error: NameError: name 'root' is not defined`, exit 2. Found while building
+the S2-007 fixtures — the new `nostray` case was the first fixture in the suite's history to hold
+two state files.
+
+**Impact:** fail-safe but blind. The top-level handler converts the crash to exit 2, and AGENTS.md
+§5.2 makes exit 2 a STOP condition, so no unsafe apply could slip through. But the gate could never
+render a verdict for a multi-state directory — exactly the duplicate-inventory shape it exists to
+catch — and its documented "the verdict is the WORST of them" behaviour was unreachable code. A
+directory holding a healthy state beside a 0-byte one reported UNEVALUATED instead of REFUSED,
+which sends an operator hunting for a credential or backend problem that does not exist.
+
+**Resolution:** parameter renamed `forced` → `root`; `relative_to` guarded for `root is None` and
+wrapped for `ValueError`, so an explicit `--state` pointing outside `root` prints absolutely rather
+than crashing.
+
+**Regression test:** three fixtures. `multiws` (two healthy states) must exit 0 **and** list both
+files; `multiwsbad` (healthy beside 0-byte) must exit 1, proving the worst-of-them rule now actually
+executes rather than being dead code; `nostray` exercises the same two-state shape for S2-007.
+Against the pre-fix gate the suite reports **6 failures**; against the fixed gate,
+**23 tests, 0 failures**. A test that only ever passes is not coverage, so both directions were run.
+
+**Files affected:** `scripts/state_gate.py`, `tests/test_state_gate.sh`
+
+### S1-012: `plan.yml`'s destroy/replace gate can never pass in CI, so every `*.tf` PR was red
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED; **CI proof owed** — the corrected step has not run on a runner yet  
+**Finding:** `.github/workflows/plan.yml`'s `Validate & Plan` job ends its gate with
+`terraform show -json tfplan > tfplan.json && python3 scripts/plan_gate.py tfplan.json`. But
+`terraform.tfstate` is gitignored, so a CI checkout has **no inventory**: `terraform init` starts
+from empty state and every plan is create-only. The gate correctly refuses that shape, and the log
+says so verbatim:
+
+```
+HALT — plan was built on an EMPTY state yet proposes 119 create(s). This runner cannot see
+terraform.tfstate; applying would attempt to re-create resources that already exist.
+     plan: 119 to add, 0 to change, 0 to destroy, 0 to replace (119 resource change(s) evaluated)
+```
+
+**The gate is right; the wiring is wrong.** `119` is exactly the live instance count
+(40 repositories + 40 vulnerability-alert settings + 11 governance + 28 standard branch
+protections), independently confirmed by `terraform state list | wc -l` on the host — a useful
+cross-check, since a plan built against real state would never produce that number.
+
+**Attribution, because it looked like my regression:** it was not one. `Validate & Plan` failed on
+PR #3 (`dd6031a`) **and** on the earlier PR run `39479272770` at `bc05f3d` (2026-10-20), and in both
+cases the failing step is the same `Destroy / Replace Gate`. "Both failed" is not "failed for the
+same reason", so the step-level conclusions and the log text were compared before this was called
+pre-existing.
+
+**Impact:** the check is red for every PR touching `*.tf`, `repos/**`, `policy/**` or `*.tfvars`,
+and does not run at all otherwise. A required-looking status check that can never pass is not a
+control — it is noise that trains an operator to merge through red, and it destroys the evidential
+value of the whole check suite for SOC 2 / ISO change-management claims. It also masks real
+failures: a genuine destroy introduced by a future PR would look identical to the usual red.
+Note that `required_status_checks` is currently disabled on `main` under `solo_mode`, so nothing
+blocks today — which is exactly why this has survived unnoticed.
+
+**Why a create-only plan carries no signal:** with empty state, nothing can be a destroy or a
+replace — every object is an add. The detection the step performs is therefore **structurally
+unreachable** in CI, so skipping the evaluation there loses no protection.
+
+**Resolution:** the step is armed on positive evidence of a reachable inventory — a non-empty
+`terraform.tfstate` **or** a declared `backend` block — and otherwise emits a `::notice::` stating
+that the verdict is UNEVALUATED in CI and pointing at where the gate really runs (`make plan-gate`,
+which `make apply` depends on). Three properties were tested rather than asserted, using a stub
+`terraform` on PATH:
+
+| Scenario | Expected | Observed |
+|---|---|---|
+| CI checkout: no state, no backend | skip, exit 0, notice emitted | `RC=0`, notice + step summary written |
+| state present, plan contains a **destroy** | refuse | `RC=1` from `plan_gate.py` |
+| state present, clean plan | pass | armed branch taken, no UNEVALUATED notice |
+| `backend "s3"` declared, no local state | arm automatically | `RC=1` branch taken — so the gate re-arms itself after the S2-003 remote-state migration |
+
+**This is explicitly not a weakening.** No test threshold was lowered; the plan-gate self-test
+(11 fixtures, including the empty-state shape) still runs on every PR and is what proves the gate's
+logic; and the evaluation still happens unconditionally wherever the inputs exist. The
+`--allow-empty-state` bootstrap exception was deliberately **not** used — reaching for it here would
+be the workaround AGENTS.md §5.2 forbids.
+
+**Residual:** `apply.yml` runs the same `plan_gate.py` in its `staging` and `prod` apply jobs, which
+are gated off by `vars.TF_REMOTE_STATE_ENABLED == 'true'`. If that variable is ever set **without** a
+backend also being declared in `main.tf`, those jobs inherit this identical defect and will halt on
+an empty state mid-apply. Checked, not inferred: `grep -E '^\s*backend\s+"' *.tf` returns nothing
+today, so the pairing requirement is real and undocumented. It belongs to S2-003.
+
+**Files affected:** `.github/workflows/plan.yml`, `.github/workflows/apply.yml` (comment only),
+`docs/drift-findings.md`
 
 ---
 
@@ -1025,6 +1211,265 @@ and report the set difference — exit codes 0 evaluated-clean / 1 mismatch / 2 
 read-back rather than by the POST echo.
 **Files affected:** `journeyoflife-org/<11 repos>/.github/dependabot.yml` (not managed by this
 control plane); no file in `jol-control` declares a label vocabulary
+
+### S2-007: state-gate's stale-copy detection missed the one copy that diverged
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED  
+**Finding:** the stray filter was `x.suffix in (".backup", ".bak") and ".tfstate" in x.name`.
+`pathlib.Path("terraform.tfstate.backup_20260930_213529").suffix` is `.backup_20260930_213529`,
+so timestamped copies were invisible to it. The three files on this host:
+
+| File | Serial | Resource blocks | Detected before the fix |
+|---|---|---|---|
+| `terraform.tfstate` | 306 | 4 | live |
+| `terraform.tfstate.backup` | 304 | 4 | yes |
+| `terraform.tfstate.backup_20260930_213529` | 301 | **5** | **no** |
+
+The missed copy is the divergent one. It alone still records `github_team.security` (1 instance),
+which live state dropped between serials 301 and 306 — so the NOTICE, whose own text warns that "a
+human restoring the wrong one silently reverts inventory", fired on the near-identical copy and
+stayed silent about the only copy that could actually revert something.
+
+**Impact:** moderate, and it is a control-accuracy defect rather than an exposure. Nothing applies
+from a stray file automatically. The risk is a human restoring the wrong file during exactly the
+incident this repository is already carrying under S2-003 — one local state file, no locking, no
+versioning. A gate that reports the harmless copy and misses the harmful one trains the operator to
+read the NOTICE as noise.
+
+**Resolution:** a shared `stale_state_copies(root)` helper matching on the **name** rather than the
+suffix, excluding the live `terraform.tfstate`, excluding directories (so `terraform.tfstate.d/`,
+which Terraform *reads*, is never reported) and excluding dotfiles (so the transient
+`.terraform.tfstate.lock.info` is never reported). Both former call sites now use it, so they cannot
+diverge again. `make state-gate` on this repository now reports
+`2 stale state cop(ies)` and names both.
+
+**Regression test:** four assertions — a timestamped copy must be named; the plain `.backup` form
+must still be named (a fix that only catches timestamps is not a fix); both together must count as
+two; and a workspace-state directory plus a lock file must **not** be reported. These assert on the
+gate's *output*, not its exit code, because a stray NOTICE never changes the verdict — which is
+precisely why an exit-code-only suite passed over the defect. `tests/test_state_gate.sh` previously
+had **zero** coverage of the stray path (`grep -iE "backup|stray|stale"` → no match), against
+AGENTS.md §7's requirement that a gate ship with fixtures derived from real captured output; the
+filename in the fixture is the real artifact's name. Against the pre-fix gate the timestamped
+assertions fail.
+
+**Files affected:** `scripts/state_gate.py`, `tests/test_state_gate.sh`
+
+### S2-008: `make lint` modified the working tree, editing a `prevent_destroy` block
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED  
+**Finding:** `Makefile` defined `fmt: terraform fmt -recursive` — the *rewriting* form — and
+`lint: fmt validate`. AGENTS.md §3 listed `make fmt` / `make lint` among the verified commands,
+alongside `terraform validate`, with no note that either writes. Because `repositories.tf` was not
+format-clean (S2-009), running `make lint` rewrote line 66: inside the `github_repository.repo`
+`lifecycle` block that holds `prevent_destroy = true`, which AGENTS.md §4 forbids changing without
+explicit in-session human approval. The documented way to verify this repository therefore made a
+gated edit, silently, as a side effect.
+
+**Observed, not hypothetical.** During read-only discovery this session ran
+`terraform fmt -diff repositories.tf` and found the file modified afterwards. **`-diff` is not
+`-check`**: it displays the diff *and still rewrites the file in place*. Only `-check` is
+non-mutating. The resulting change was verified as `git diff -w --numstat` → empty, i.e.
+whitespace-only with no semantic effect, and `prevent_destroy = true` /
+`ignore_changes = [auto_init, template]` byte-identical. It is also exactly the change later
+approved for S2-009, so it was kept rather than reverted — but it was an unintended mutation of a
+protected block, and it is recorded here because the hazard is the command, not the outcome.
+
+**Resolution:** a new `fmt-check` target (`terraform fmt -check -recursive`); `lint` now depends on
+`fmt-check validate`; `fmt` is retained but documented as mutating. AGENTS.md §3 was rewritten so the
+three targets state plainly which one writes. `make lint` verified `RC=0` and confirmed
+non-mutating by `git status` afterwards.
+
+**Files affected:** `Makefile`, `AGENTS.md`
+
+### S2-009: `terraform fmt -check` fails at HEAD, and nothing enforces it
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED (formatting). **CI enforcement still absent** — deliberately not added here.  
+**Finding:** `terraform fmt -check -recursive` exits **3** on `repositories.tf` at `26132e8`. Root
+cause pinned by extracting each revision to a temp directory and checking it there, rather than by
+reading the diff: clean at `29fb05e` and `0266bdd`, **first broken at `226fa5c`** ("fix: exclude
+private repos from branch protection; ignore template drift"), still broken at HEAD. That commit
+changed `ignore_changes = [auto_init]` to
+`ignore_changes = [auto_init, template] # template is computed from API for repos created from
+templates`; the longer line with a trailing comment makes `terraform fmt` want the sibling
+`prevent_destroy` comment padded so both align.
+
+`grep -rn fmt .github/workflows/` returns no match, so no CI job enforces formatting and nothing
+caught it across four commits.
+
+**This contradicts a previously recorded claim.** A prior session's notes assert that
+`terraform fmt -check -recursive` passed. It did — at `0266bdd`. It stopped passing at `226fa5c`.
+Both statements are true of different revisions, which is why the claim is dated here rather than
+deleted.
+
+**Impact:** low in itself, but it falsifies any "the local verification suite is green" claim, and
+that claim is part of the change-management evidence this repository presents. It is also the
+precondition that made S2-008 dangerous: a clean tree plus a mutating `lint` would have been
+harmless.
+
+**Resolution:** the one-line comment alignment applied, with explicit in-session human approval
+because it lands in a §4-gated `lifecycle` block. `make fmt-check` now exits 0 and
+`terraform validate` still reports `Success!`.
+
+**Still open:** no CI job runs `fmt -check`, so the next unformatted commit lands silently again.
+Adding `terraform fmt -check -recursive` to `apply.yml`'s `Dev — Validate` is recommended; it was
+not done here to keep this diff to the defects actually confirmed, and because adding a required
+check touches the enforcement posture.
+
+**Files affected:** `repositories.tf`, `Makefile`
+
+### S2-010: two clones of repositories that are no longer in the organization sit in the fleet tree
+
+**Discovered:** 2026-10-27  
+**Status:** OPEN — needs an owner decision; not fixable by an edit inside `jol-control`  
+**Finding:** `/opt/jol/repos/jol-backend-platform` has
+`origin = https://github.com/journeyoflife-org/jol-backend-platform.git`, but that repository is not
+in the organization. `gh api repos/journeyoflife-org/jol-backend-platform` resolves only through
+GitHub's transfer redirect: `full_name = JourneyOfLife/jol-backend-platform`,
+`owner.login = JourneyOfLife` (the personal account), `archived = true`, `visibility = private`.
+Local HEAD is `7b99e1a` (2026-09-22) "chore: archive jol-backend-platform (D2 — empty repo,
+successor is jol-hub)", dated **after** the remote's `pushed_at` of 2026-02-04, so it carries a
+commit that exists on no remote.
+
+**There is a second one, and this entry first reported only the first.** `/opt/jol/repos/obsidian`
+carries `origin = https://github.com/journeyoflife-org/obsidian.git`, and `gh api
+repos/journeyoflife-org/obsidian` likewise resolves to `JourneyOfLife/obsidian` — personal account,
+**public**, `archived=false`. Its HEAD commit is `d0b0fe9` (2026-09-19)
+**"SEC-001: Remove exposed GitHub PAT (CRITICAL security incident)"**. So a security-incident record
+lives in a public repository outside the organization's governance and outside this control plane,
+while its own `origin` URL claims otherwise. Listing `obsidian` in a directory count and then not
+checking its remote is the miss; it is recorded here because "I enumerated it" is not the same as
+"I examined it".
+
+**This was already known and never persisted.** A prior fleet audit of all 41 repositories reached
+the same conclusion — both `jol-backend-platform` and `obsidian` redirect to the personal account —
+and it appears in that audit's findings but in no row of this register. So the correct statement is
+not "discovered 2026-10-27" but "rediscovered 2026-10-27 after being found and left unrecorded once".
+That is the same failure shape as S2-011: an analysis whose output was never written where the next
+reader would look.
+
+This is the reconciliation behind the checkout count. `/opt/jol/repos` holds 42 visible entries
+against 41 organization repositories: 41 `jol-*` directories plus `obsidian`, of which **40** are
+governed, and `jol-backend-platform` **and** `obsidian` are both foreign. Two hidden entries sit
+alongside — `.github` (the org-defaults repository, correctly checked out) and `.wt` (an empty
+leftover directory).
+
+**Impact:** inventory integrity rather than exposure. A sweep that counts checkouts over-counts the
+governed fleet by one; a sweep driven by the allow-list skips this clone silently; and its `origin`
+URL only works because GitHub redirects, so `git fetch` succeeds while pointing at a resource
+outside the organization's governance and outside this control plane. Given that
+`journeyoflife-org` and `jolarca-dev` are deliberately segregated estates, a clone whose stated
+remote lies about its owner is the kind of artifact that makes a future separation audit
+unanswerable.
+
+**Remediation prepared, not executed** — deleting a clone is destructive and outside this
+repository's scope: confirm `7b99e1a` is genuinely superseded by `jol-hub`, then either re-point
+`origin` at `https://github.com/JourneyOfLife/jol-backend-platform.git` so the URL states the truth,
+or remove the clone. Neither was done: no authorization to delete, and the unpushed commit must be
+accounted for first — it is the only copy of that change.
+
+**The only-copy commit is now preserved.** `git format-patch -1 7b99e1a` was written to `/tmp` first,
+which is wiped on reboot — so it was moved to `/opt/jol/evidence/2026-10-27-s2-010/` with a manifest
+and `sha256 162e0eb4c116fbcda476e4663a10b8c08c021e150cb67db4e6baa96c657344bc`. Integrity was proved
+by **reverse-applying** it against the clone (`git apply --check -R` succeeds), which confirms the
+patch faithfully represents the commit rather than merely being a file of the right size. The commit
+is a 13-line `README.md` change.
+
+**Files affected:** none in `jol-control`; `/opt/jol/repos/jol-backend-platform` is a sibling clone
+
+### S2-011: this register's index omitted S1-009
+
+**Discovered:** 2026-10-27  
+**Status:** FIXED  
+**Finding:** S1-009 has a full entry, is cited from AGENTS.md §2, and is cited again from the
+Methodology section at the end of this file — but the index table ran S1-008 then jumped straight to
+S2-001. The document's own preamble states that entries are kept in numeric order.
+
+**Impact:** a reader auditing by index concludes there are eight S1 findings and misses the one
+saying that seven governance-tier repositories hold branch protection in state and none on GitHub —
+the most consequential entry in the register. This is the index/body drift this register has already
+been burned by once during the S1-002 closure.
+
+**Resolution:** index row added, with the status text taken from the entry's own `**Status:**` line
+rather than paraphrased. Every `### S1-…` and `### S2-…` body heading was compared against the index
+in the same pass; S1-009 was the only omission.
+
+**Files affected:** `docs/drift-findings.md`
+
+### S2-012: an agent destroyed the live `terraform.tfstate`; recovery depended on a backup no runbook named
+
+**Discovered:** 2026-10-27  
+**Status:** RECOVERED byte-exactly. **The underlying gap is OPEN** — the backup set is manual,
+stale, same-device, and documented in no runbook (RB-08 was written by this incident).  
+**Finding — what happened, attributed to this session.** While testing the S1-012 fix, a shell
+command built a temp directory with `T=$(mktemp -d)` but **never `cd`'d into it**, so every
+following redirection resolved against the repository root. Two statements then acted on the real
+file: `printf … > terraform.tfstate` overwrote the live inventory with a 30-byte stub, and a later
+`rm -f terraform.tfstate` in the next test case deleted it. The single copy of the infrastructure
+record for 40 repositories was gone. AGENTS.md §4 lists `terraform.tfstate` as *"Read-only, never
+edit"*; a command that writes to it while intending to write to a scratch directory is precisely the
+hazard that rule exists to prevent, and the mitigation that should have been in place — running the
+test inside the temp directory, or under `mktemp -d` with an explicit `cd` and a trap — was omitted.
+
+**How it was recovered.** `find` over `/opt/jol` and `/home/jol` surfaced
+`/opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age` — three `age`-encrypted snapshots.
+All three decrypt to **byte-identical** state, matching the checksum this session had recorded from
+the live file during phase 0:
+
+| Attribute | Destroyed file | Decrypted backup |
+|---|---|---|
+| bytes | 195,121 | 195,121 |
+| md5 | `b25b88219552d3d5a47c749e2b3d85a5` | `b25b88219552d3d5a47c749e2b3d85a5` |
+| serial | 306 | 306 |
+| lineage | `25425c0f-0345-f6ff-4f27-6d8b76339c06` | identical |
+| instances | 119 | 119 (40 repo + 40 vuln + 11 gov BP + 28 std BP) |
+
+The restore was verified three independent ways: the md5 matched, `terraform state list | wc -l`
+returned 119, and `make state-gate` answered `SAFE` with exit 0. Plaintext was never printed — only
+`serial` / `lineage` / counts were read out with `jq`. The procedure is now
+`docs/runbooks.md` **RB-08**, executed and confirmed rather than written from memory.
+
+**Why the recovery is not the finding — the documentation is.** Three things are false or missing
+that this incident exposed:
+
+1. **`Makefile` asserted the opposite.** `make apply` printed *"WARNING: this host holds the only
+copy of terraform.tfstate."* It does not: three encrypted copies exist on this host. The warning's
+*intent* — no off-host copy, be careful — is correct and worth keeping, but a false literal in the
+one place an operator reads about state risk is worse than no warning, because it also hides that a
+restore path exists. Corrected to state what is actually true.
+2. **No runbook referenced the backup set.** `docs/runbooks.md` had RB-01…RB-07 and nothing about
+restoring state. `docs/SECRETS_INVENTORY.md` names the age identity (row AGE-1) and the
+`vault-<UTC>.bundle` artifacts, but never tells a responder that the state snapshots sit beside them
+or how to verify one. Recovery today worked only because a `find` was run during an unrelated audit.
+3. **The backups are manual and unverified.** No `crontab` entry and no `systemd` timer refreshes
+`/opt/jol/backup/tfstate`; the newest jol-control snapshot is 2026-10-20, seven days before this
+incident. Nothing had ever tested that the key decrypts them until now.
+
+**Impact:** none realized — the restore is byte-exact and provable. The exposure was real and
+narrow: had the phase-0 checksum not been recorded, and had the snapshots not been found, the
+recovery would have been `terraform plan -refresh-only`-style re-import of 119 resources by hand,
+with `make apply` refusing until then. Because state is gitignored, `git` could not have helped.
+
+**Residual risk, OPEN:** the live state and its only backups are on **one physical device**
+(`/dev/nvme0n1p6` for `/opt/jol/backup`, `/dev/nvme0n1p8` for `/opt/jol`). A single NVMe failure
+loses the inventory and every copy together, and no check in this repository can rebuild it —
+`make drift` compares names and visibility, not attributes. This is S2-003's accepted risk (RA-03)
+sharpened by measurement: the risk acceptance says "state is local"; the true statement is "state is
+local, manually backed up to the same device, with no restore ever rehearsed until an agent caused
+one." Recommend an off-device copy plus a scheduled refresh, and that RB-08's verification step be
+run on a cadence rather than only after a loss.
+
+**Process rule adopted:** any shell test that redirects into files named like repository artifacts
+must `cd` into its `mktemp -d` directory first and clean up via `trap`, never address repo-relative
+paths from an inherited working directory. This session also hit the mirror-image error earlier
+(`terraform fmt -diff` mutating a tracked file, S2-008); both are the same class — a command believed
+to be read-only that is not.
+
+**Files affected:** `Makefile` (warning corrected), `docs/runbooks.md` (RB-08 added),
+`docs/drift-findings.md`; `terraform.tfstate` restored byte-exact, no net change
 
 ---
 

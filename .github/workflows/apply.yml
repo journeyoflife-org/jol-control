@@ -75,7 +75,9 @@ jobs:
         run: python3 tests/test_plan_gate.py
 
       - name: State Gate Self-Test (prove the gate is not inert)
-        # 16 fixtures over the three exit codes: 0 safe / 1 refused / 2 cannot-check.
+        # 23 assertions over the three exit codes: 0 safe / 1 refused / 2 cannot-check.
+        # Some assert on the gate's OUTPUT rather than its exit code — the stale-copy NOTICE
+        # never changes the verdict, so an exit-code-only suite passed straight over S2-007.
         # The gate itself is a HOST-SIDE pre-apply check and is not run here: CI has no
         # backend credentials, so it cannot read the inventory it would be judging.
         run: bash tests/test_state_gate.sh

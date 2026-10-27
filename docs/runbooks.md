@@ -335,3 +335,84 @@ enumeration loses `jol-dr`, and the job returns exit 2 with the `github_count: 3
 Letting the token **expire** is equally honest but looks different — `401 Bad credentials` and no
 `github_count` — so read the failure-mode table before concluding the binding broke. There is no
 path by which losing this credential produces a green drift verdict.
+
+---
+
+## RB-08: Restore `terraform.tfstate` from the encrypted backup set
+
+**Written 2026-10-27 after this procedure was executed and verified.** An agent destroyed the live
+state file during a test (see `docs/drift-findings.md` S2-012); the restore below is the path that
+recovered it byte-exactly. It is recorded because the backup set existed, worked, and was named in
+no runbook — recovery depended on searching the filesystem for it.
+
+**Prerequisites:** `age` on PATH; the X25519 identity `~/.config/age/state-backup-key.txt`
+(inventory row **AGE-1** in `docs/SECRETS_INVENTORY.md`); a *checksum of the state you expect*,
+not just a backup you hope is right.
+
+1. **Stop.** Do not run `terraform init`, `plan`, `apply` or `refresh` in the directory. With no
+   state file, `apply` would recreate everything — which is why `state-gate` and `plan-gate` exist,
+   and why they will refuse. A refused apply is the control working; do not route around it.
+2. **Preserve every surviving copy before touching anything**, so a second mistake cannot be
+   unrecoverable. Make them read-only and checksum them:
+   ```bash
+   D=/opt/jol/evidence/$(date +%F)-state-incident; mkdir -p "$D"
+   cd /opt/jol/repos/jol-control
+   cp -p terraform.tfstate* "$D/" 2>/dev/null; chmod a-w "$D"/*
+   ( cd "$D" && sha256sum * > CHECKSUMS.sha256 )
+   ```
+3. **Enumerate the candidates.** There is no automation behind these — they are manual snapshots:
+   ```bash
+   ls -la /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age
+   ```
+4. **Decrypt to a scratch file and compare metadata — never print state contents.** State carries
+   the full inventory of every governed repository; it must not reach a log, a terminal scrollback
+   or a pasted message.
+   ```bash
+   W=$(mktemp -d); chmod 700 "$W"
+   for f in /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age; do
+     age -d -i ~/.config/age/state-backup-key.txt "$f" > "$W/out.json" 2>/dev/null || continue
+     echo "$(basename "$f")  bytes=$(stat -c%s "$W/out.json")  md5=$(md5sum "$W/out.json" | cut -d' ' -f1)"
+     jq -r '"  serial=\(.serial) lineage=\(.lineage) instances=\([.resources[].instances[]]|length)"' "$W/out.json"
+     jq -r '.resources[] | "    \(.type).\(.name) = \([.instances[]]|length)"' "$W/out.json"
+   done
+   ```
+   **Accept a candidate only on an exact match** of `serial`, `lineage`, instance count and, if you
+   have one, the recorded md5. Today all three jol-control snapshots resolve to serial **306**,
+   lineage `25425c0f-…`, **119** instances (`github_repository.repo` 40,
+   `github_repository_vulnerability_alerts.repo` 40, `github_branch_protection.governance` 11,
+   `.standard` 28), so a stale restore is not a silent risk here — but re-derive the numbers rather
+   than trusting this sentence, because they move with every apply.
+5. **Restore with tight permissions and verify byte-exactly:**
+   ```bash
+   cd /opt/jol/repos/jol-control
+   ( umask 077; age -d -i ~/.config/age/state-backup-key.txt <CHOSEN.age> > terraform.tfstate )
+   md5sum terraform.tfstate            # must equal the value from step 4
+   stat -c '%A %U:%G %s' terraform.tfstate   # expect -rw------- jol:jol
+   ```
+6. **Confirm Terraform itself agrees, then let the gate judge it:**
+   ```bash
+   terraform state list | wc -l   # expect 119 — matches the instance count independently
+   make state-gate                # expect: SAFE — state accounts for managed resources, exit 0
+   terraform validate             # expect: Success!
+   rm -rf "$W"                    # destroy the plaintext scratch copy
+   ```
+7. **Record it** in `docs/drift-findings.md` and `CHANGELOG.md`: what was lost, which snapshot was
+   used, the checksum that proves fidelity, and who caused it.
+
+**Expected output:** step 4 prints the same `serial`/`instances` for every snapshot; step 5's md5
+equals step 4's; step 6 prints `119`, then `SAFE`, then `Success!`, all exit 0.
+
+**What a failure means:** `age: Error … failed to read next cipher block` → wrong or corrupted
+identity file; `MAC failed to decrypt` → the snapshot was not encrypted to this key. A `serial`
+**lower** than expected → you picked a stale snapshot; restoring it would silently revert inventory,
+which is the exact hazard `state_gate.py`'s NOTICE describes. If no candidate matches, **stop and
+escalate** — do not restore a near-match, and do not re-create state by applying.
+
+**Rollback:** the copies from step 2 are the rollback. Nothing in this procedure writes outside
+`terraform.tfstate`, which is gitignored and therefore invisible to `git`.
+
+**Residual risk this runbook cannot fix:** the backups are **manual** (newest 2026-10-20 as of
+writing, i.e. 7 days stale) and live on the **same physical device** as the live state
+(`/dev/nvme0n1p6` vs `/dev/nvme0n1p8`, one NVMe). No cron and no systemd timer refreshes them, and
+no off-host copy exists. A single disk failure loses the inventory and its backups together, and
+`make drift` cannot rebuild it. Tracked as S2-012.

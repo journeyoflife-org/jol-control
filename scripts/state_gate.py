@@ -59,6 +59,33 @@ def tf_files_in(d: pathlib.Path):
     except OSError:
         return []
 
+# The live local-state paths Terraform itself reads. Anything else in the directory whose
+# name still carries ".tfstate" is a copy a human could mistake for the inventory.
+LIVE_STATE_NAMES = ("terraform.tfstate",)
+
+def stale_state_copies(root: pathlib.Path):
+    """Stale state copies sitting beside the live state in root (non-recursive).
+
+    Matching on `.suffix in (".backup", ".bak")` misses the timestamped form
+    `terraform.tfstate.backup_YYYYMMDD_HHMMSS`, whose suffix is the whole
+    `.backup_20260930_213529`. That is the copy most likely to diverge, because it is
+    taken *before* a state surgery — so the gate reported the near-identical
+    `terraform.tfstate.backup` and stayed silent about the one holding a resource the
+    live state had already dropped. Match on the name instead. See S2-007.
+
+    Excluded: the live state itself, directories (`terraform.tfstate.d/` holds workspace
+    state and is read, not stray), and dotfiles (`.terraform.tfstate.lock.info` is a
+    transient lock, not a second answer to "what exists").
+    """
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return []
+    return [x for x in entries
+            if x.is_file() and ".tfstate" in x.name
+            and x.name not in LIVE_STATE_NAMES
+            and not x.name.startswith(".")]
+
 def vendored_reason(path: pathlib.Path):
     for part in path.parts:
         if part in VENDOR_MARKERS:
@@ -219,12 +246,18 @@ def state_paths(root: pathlib.Path):
         paths += sorted(wsd.glob("*/terraform.tfstate"))
     return paths
 
-def worst_state(paths, forced=None):
+def worst_state(paths, root=None):
     """Evaluate every state file here; return (kind, count, detail, worst_path, per-file).
 
     Nothing is dropped: when a directory has several workspaces each file is listed, and
     the verdict is the WORST of them (a good `staging` state does not make a truncated
-    `prod` state safe)."""
+    `prod` state safe).
+
+    `root` is the directory the paths are relative to, used only for the per-file listing.
+    This parameter used to be named `forced` while the body referenced a module-global
+    `root` that does not exist, so the listing raised NameError on any directory holding
+    MORE THAN ONE state file. The top-level handler turned that into UNEVALUATED (exit 2):
+    fail-safe, but blind precisely where duplicate inventories live. See S1-011."""
     order = {"garbage": 3, "zero-byte": 2, "missing": 2, "empty": 1, "ok": 0}
     results = []
     for f in (paths or []):
@@ -238,7 +271,11 @@ def worst_state(paths, forced=None):
     if len(results) > 1:
         for f, kind, count, detail in results:
             lab = "empty" if (kind == "ok" and count == 0) else kind
-            lines.append(f"file   : {f.relative_to(root)} -> {lab}, {count} managed")
+            try:
+                rel = f.relative_to(root) if root is not None else f
+            except ValueError:      # --state pointing outside root: show it absolutely
+                rel = f
+            lines.append(f"file   : {rel} -> {lab}, {count} managed")
     return worst[1], worst[2], worst[3], worst[0], lines
 
 def classify(root: pathlib.Path, a_state=None, idx=None):
@@ -285,8 +322,7 @@ def classify(root: pathlib.Path, a_state=None, idx=None):
     if oob:
         remote = remote or ["via -backend-config (no block in this directory)"]
     if (remote or oob) and not a_state:
-        strays = sorted(x for x in root.iterdir()
-                        if x.suffix in (".backup", ".bak") and ".tfstate" in x.name)
+        strays = stale_state_copies(root)
         out.append(f"config : {len(tf_files_in(root))} .tf, {declared} resource block(s), "
                    f"{nmod} module block(s)")
         if oob:
@@ -304,8 +340,7 @@ def classify(root: pathlib.Path, a_state=None, idx=None):
                    "human step), or pass `--state <pulled copy>` to check it here.")
         return 2, out
 
-    strays = sorted(x for x in root.iterdir()
-                    if x.suffix in (".backup", ".bak") and ".tfstate" in x.name)
+    strays = stale_state_copies(root)
     kind, count, detail, worst_path, per_file = worst_state([sp] if a_state else own, root)
     label = "empty" if (kind == "ok" and count == 0) else kind
     out.append(f"config : {len(tf_files_in(root))} .tf, {declared} resource block(s), "

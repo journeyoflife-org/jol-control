@@ -29,6 +29,22 @@ assert() { # dir want label
   if [ "$rc" = "$2" ]; then echo "  ok    $3 (exit=$rc)"; pass=$((pass+1));
   else echo "  FAIL  $3 (exit=$rc want=$2)"; fail=$((fail+1)); fi }
 
+# The stale-copy NOTICE never changes the verdict, so an exit-code-only assertion passes
+# with the detection still broken — which is exactly how S2-007 went unnoticed. These two
+# assert on what the gate actually REPORTS.
+assert_note() { # dir want_exit needle label
+  out=$(python3 "$GATE" "$1" 2>&1); rc=$?
+  if [ "$rc" != "$2" ]; then echo "  FAIL  $4 (exit=$rc want=$2)"; fail=$((fail+1)); return; fi
+  if printf '%s' "$out" | grep -qF -- "$3"; then
+    echo "  ok    $4 (exit=$rc, report names '$3')"; pass=$((pass+1));
+  else echo "  FAIL  $4 (exit=$rc but the report never names '$3')"; fail=$((fail+1)); fi }
+assert_no_note() { # dir want_exit needle label — guards against over-broad detection
+  out=$(python3 "$GATE" "$1" 2>&1); rc=$?
+  if [ "$rc" != "$2" ]; then echo "  FAIL  $4 (exit=$rc want=$2)"; fail=$((fail+1)); return; fi
+  if printf '%s' "$out" | grep -qF -- "$3"; then
+    echo "  FAIL  $4 (exit=$rc but the report DOES name '$3')"; fail=$((fail+1));
+  else echo "  ok    $4 (exit=$rc, correctly silent about '$3')"; pass=$((pass+1)); fi }
+
 # ok — state knows a managed resource
 tf "$W/ok"; real_state "$W/ok/terraform.tfstate"
 # zero-byte — the S10 case, and the one Terraform never produces itself
@@ -99,6 +115,41 @@ printf 'resource "aws_vpc" "this" { cidr_block = "10.0.0.0/16" }\n' \
 mkdir -p "$W/modonly"
 printf 'module "vpc" { source = "./modules/vpc" }\n' > "$W/modonly/main.tf"
 
+# S2-007 regression fixtures. The filename shape is taken from the REAL artifact on the
+# control-plane host: terraform.tfstate.backup_20260930_213529 (serial 301) was the only
+# copy still recording github_team.security after live state (serial 306) dropped it, and
+# `.suffix` on that name is ".backup_20260930_213529", so the old filter never saw the one
+# copy that actually diverged. Contents are irrelevant here — only the NAME is detected.
+tf "$W/stray_ts"; real_state "$W/stray_ts/terraform.tfstate"
+: > "$W/stray_ts/terraform.tfstate.backup_20260930_213529"
+# the plain form must keep being reported: a fix that only catches timestamps is not a fix
+tf "$W/stray_plain"; real_state "$W/stray_plain/terraform.tfstate"
+: > "$W/stray_plain/terraform.tfstate.backup"
+# both shapes at once, so neither can mask the other in the count
+tf "$W/stray_both"; real_state "$W/stray_both/terraform.tfstate"
+: > "$W/stray_both/terraform.tfstate.backup"
+: > "$W/stray_both/terraform.tfstate.backup_20260930_213529"
+# over-broad-detection guard: workspace state is READ by Terraform and a lock file is
+# transient. Neither is "a second answer to what exists", so neither may be reported.
+tf "$W/nostray"; real_state "$W/nostray/terraform.tfstate"
+mkdir -p "$W/nostray/terraform.tfstate.d/staging"
+real_state "$W/nostray/terraform.tfstate.d/staging/terraform.tfstate"
+: > "$W/nostray/.terraform.tfstate.lock.info"
+
+# S1-011 regression: a directory holding MORE THAN ONE state file. Every other fixture has
+# exactly one, so worst_state()'s per-file listing never ran — and it referenced an undefined
+# module-global `root`, raising NameError that the handler reported as UNEVALUATED (exit 2).
+# Two healthy states must yield a real verdict (exit 0) AND list both files.
+mkdir -p "$W/multiws/terraform.tfstate.d/staging"
+cp "$W/ws/main.tf" "$W/multiws/main.tf"
+real_state "$W/multiws/terraform.tfstate"
+real_state "$W/multiws/terraform.tfstate.d/staging/terraform.tfstate"
+# ...and the worst-of-them rule must still hold: a healthy state beside a 0-byte one REFUSES
+mkdir -p "$W/multiwsbad/terraform.tfstate.d/staging"
+cp "$W/ws/main.tf" "$W/multiwsbad/main.tf"
+real_state "$W/multiwsbad/terraform.tfstate"
+: > "$W/multiwsbad/terraform.tfstate.d/staging/terraform.tfstate"
+
 assert "$W/ok"      0 "SAFE   state accounts for managed resources"
 assert "$W/zero"    1 "REFUSED 0-byte state"
 assert "$W/empty"   1 "REFUSED state parses but has zero resources"
@@ -115,6 +166,13 @@ assert "$W/modonly" 1 "REFUSED module-only root with no state"
 assert "$W/ws"      0 "SAFE   workspace state under terraform.tfstate.d/"
 assert "$W/wszero"  1 "REFUSED 0-byte workspace state"
 assert "$W/tree2/modules/vpc" 1 "REFUSED child module holding its own state"
+assert_note    "$W/stray_ts"    0 "terraform.tfstate.backup_20260930_213529" "NOTICE names a timestamped stale copy (S2-007)"
+assert_note    "$W/stray_plain" 0 "terraform.tfstate.backup" "NOTICE still names the plain .backup form"
+assert_note    "$W/stray_both"  0 "2 stale state cop(ies)" "NOTICE counts both shapes as two, not one"
+assert_no_note "$W/nostray"     0 "stale state cop" "workspace state dir and lock file are not reported as strays"
+assert_note    "$W/multiws"     0 "file   : terraform.tfstate -> ok" "multi-state dir gets a verdict, not UNEVALUATED (S1-011)"
+assert_note    "$W/multiws"     0 "file   : terraform.tfstate.d/staging/terraform.tfstate -> ok" "and every state file in it is listed"
+assert         "$W/multiwsbad"  1 "REFUSED worst-of-them: healthy state beside a 0-byte one"
 
 echo "---"
 echo "state-gate self-test: $((pass+fail)) tests, $fail failures"

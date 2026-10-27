@@ -63,7 +63,7 @@ resource "github_repository" "repo" {
   # .gitignore and LICENSE are provisioned per-repo outside this control plane.
 
   lifecycle {
-    prevent_destroy = true # never accidentally delete a repo
+    prevent_destroy = true                  # never accidentally delete a repo
     ignore_changes  = [auto_init, template] # template is computed from API for repos created from templates
   }
 }
