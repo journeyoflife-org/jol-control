@@ -23,6 +23,7 @@ STATE="${STATE:-$REPO/terraform.tfstate}"
 DEST="${DEST:-/mnt/jol-backup/jol-control}"
 KEYDIR="${KEYDIR:-$HOME/.config/age}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$KEYDIR/offdisk-recipient.txt}"
+PENDING_MAX_H="${PENDING_MAX_H:-168}"   # how long a challenge may stay unanswered and still mean something
 PENDING="$KEYDIR/offhost-attestation.pending"
 ATTESTED="$KEYDIR/offhost-attested"
 
@@ -69,6 +70,16 @@ pack)
   if [ -e "$OUT" ]; then die "$OUT already exists - remove it deliberately, do not overwrite a packet in flight"; fi
   mkdir -p "$OUT" || die "cannot create $OUT"
 
+  if [ -s "$PENDING" ]; then
+    # An outstanding challenge is about to be replaced, which makes any packet already in transit
+    # permanently unattestable: its hash is gone, so a legitimate off-host holder would be refused and
+    # the operator would conclude the copy is broken. This happened while writing these lines - the
+    # packet was re-packed to carry a fixed script. Warn, never block: abandoning a lost packet must not
+    # become impossible.
+    echo "WARN: replacing an outstanding challenge issued $(sed -n 's/^issued=//p' "$PENDING") -"
+    echo "      any packet already away from this machine can no longer be attested. If one is"
+    echo "      in transit, finish it (verify + attest) before trusting this new packet."
+  fi
   TOKEN="${TOKEN:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
   [ "${#TOKEN}" -ge 16 ] || die "token is too short to be a challenge nonce"
   printf '%s\n' "$TOKEN" | age --encrypt --recipient "$RECIPIENT" --output "$OUT/attest-challenge.age" || die "could not write the challenge"
@@ -198,6 +209,20 @@ attest)
   printf '%s' "$TOKEN" | grep -qE '^[0-9a-f]{32}$' \
     || die "token must be 32 hex digits; got ${#TOKEN} characters (the value is not echoed here)"
   [ -s "$PENDING" ] || die "no outstanding challenge in $PENDING - run 'pack' first"
+  issued="$(sed -n 's/^issued=//p' "$PENDING")"
+  # A challenge with no lifetime stays satisfiable forever. What gets recorded is "a copy exists elsewhere
+  # and works"; a nonce recovered eleven months later, from a drive since reformatted or lost, would still
+  # write a fresh attested= timestamp and hush the gate for another 30 days. Bound the unanswered window
+  # the same way the attestation itself expires.
+  PENDING_MAX_H="${PENDING_MAX_H:-168}"
+  its="$(date -u -d "$issued" +%s 2>/dev/null || echo 0)"
+  if [ "$its" -le 0 ]; then
+    die "cannot read the issue time in $PENDING ('$issued') - refusing to attest against an undated challenge"
+  fi
+  age_h=$(( ( $(date -u +%s) - its ) / 3600 ))
+  if [ "$age_h" -gt "$PENDING_MAX_H" ]; then
+    die "challenge was issued ${age_h}h ago (> ${PENDING_MAX_H}h) - a token recovered that late proves nothing current; run 'make backup-pack' again"
+  fi
   want="$(sed -n 's/^tokenhash=//p' "$PENDING")"
   rec="$(sed -n 's/^recipient=//p' "$PENDING")"
   snap="$(sed -n 's/^snapshot=//p' "$PENDING")"

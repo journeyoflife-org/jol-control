@@ -581,9 +581,29 @@ if [ -f "$RH" ] && command -v age >/dev/null 2>&1 && [ -n "${KB:-}" ] && [ -d "$
     else fail=$((fail+1)); echo "  FAIL  56 HOWTO was expanded on the source machine - it instructs the wrong host"
       grep -n 'PWD\|tmp' "$RK/carried/HOWTO.txt" | head -3 | sed 's/^/          /'; fi
   else fail=$((fail+1)); echo "  FAIL  56 HOWTO.txt absent from the packet"; fi
-  rm -rf "$KB/packet55"
+
+  # 57: an unanswered challenge must expire. Without a bound, a nonce recovered months later from a drive
+  # that has since been reformatted would still write a fresh attested= line and quiet the gate for
+  # another 30 days - the claim is present-tense, so the evidence has to be too.
+  rc=0; timeout 120 env "${RENV[@]}" OUT="$KB/packet57" TOKEN="$KNOWN" bash "$RH" pack </dev/null >/dev/null 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then fail=$((fail+1)); echo "  FAIL  57 could not pack a challenge to age"
+  else
+    sed -i "s/^issued=.*/issued=$(date -u -d '400 hours ago' +%Y-%m-%dT%H:%M:%SZ)/" "$KB/offhost-attestation.pending"
+    rc=0; timeout 120 env "${RENV[@]}" bash "$RH" attest "$KNOWN" >"$KB/s57" 2>&1 || rc=$?
+    if [ "$rc" = 1 ] && grep -q 'issued 40[0-9]h ago' "$KB/s57" && [ -s "$KB/offhost-attestation.pending" ]; then
+      pass=$((pass+1)); echo "  ok    57 a stale challenge is refused, pending left for inspection"
+    else fail=$((fail+1)); echo "  FAIL  57 stale challenge accepted (rc=$rc)"; sed -n '1,2p' "$KB/s57" | sed 's/^/          /'; fi
+  fi
+
+  # 58: re-packing silently invalidates any packet already in transit, so it must say so. This happened
+  # for real: the packet was re-packed to carry a fixed script, which orphaned the first challenge.
+  rc=0; out=$(timeout 120 env "${RENV[@]}" OUT="$KB/packet58" bash "$RH" pack </dev/null 2>&1) || rc=$?
+  if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q 'WARN: replacing an outstanding challenge'; then
+    pass=$((pass+1)); echo "  ok    58 re-packing warns it orphans an in-flight packet"
+  else fail=$((fail+1)); echo "  FAIL  58 re-packing was silent about the outstanding challenge (rc=$rc)"; fi
+  rm -rf "$KB/packet55" "$KB/packet57" "$KB/packet58" "$KB/s57" "$KB/offhost-attestation.pending" "$KB/offhost-attested"
 else
-  skip=$((skip+3)); echo "  SKIP   53-55 rehearsal or age absent - token-input cases not evaluated"
+  skip=$((skip+6)); echo "  SKIP   53-58 rehearsal or age absent - token-input cases not evaluated"
 fi
 
 echo "---"

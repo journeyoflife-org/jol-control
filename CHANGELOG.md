@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 56 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 58 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -342,6 +342,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-022 — a custody challenge had no lifetime, and re-packing silently orphaned the one in flight.**
+  Found while answering a smaller question ("is Ctrl-C safe here?") and testing that answer rather than
+  assuming it: `attest` compared the token hash and never read `issued=`, so a nonce recovered eleven
+  months later — from a drive reformatted since, a machine sold, a stick in a drawer — would still write a
+  fresh `attested=` line and buy another 30 days of a healthy `make backup-status`. The claim is present
+  tense, so the evidence must be dated: unanswered challenges expire after 168h (`PENDING_MAX_H`), and an
+  undated or unparseable issue time is a refusal, not a pass. Separately, `pack` replaced the pending hash
+  without a word, making any packet already away from this host permanently unattestable — which happened
+  in this session, when the packet was re-packed to carry a corrected script. It warns now, naming the
+  timestamp it is about to overwrite (warning, not block: abandoning a lost packet must stay possible).
+  Cases 57–58, each mutation-verified. Also verified rather than asserted: a refused attempt, an empty
+  stdin and an aborted read all leave the pending record byte-identical (`sha256sum` before and after)
 - **S2-021 — the destruction gate printed the secret that justified it.** `retire_recovery_key.sh` phase 1
   printed the custody nonce three times, once inside a ready-to-run `RETIRE_PROOF=$NONCE …` line that also
   lands in shell history. Anyone with one copy and no off-host at all could read their own terminal, paste
@@ -370,7 +382,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit input of `state_backup_guard.sh` too, forwarded to the backup script, and the lineage
   cross-check reads the *same* file it protects; the guard cases supply the synthetic populated state that
   already existed for case 9, and the identity cases (46-50) now execute in CI rather than skipping there.
-  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **56 passed, 0
+  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **58 passed, 0
   failed**. No behaviour change on this host — the default is still `$REPO/terraform.tfstate`
 - **S2-019 — the custody challenge printed its own answer.** `offhost_rehearsal.sh pack` ended by echoing
   the nonce it had just encrypted to the off-device recipient ("for comparison only"). That nonce *is* the
@@ -383,7 +395,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reverting the fix in place makes the suite report `51 passed, 1 failed` naming the leak. **The harness
   was the second bug**: a first mutation run looked "undetected" because it printed an exit code without
   the census, and cases 51/52 had no `else` — a skipped case was indistinguishable from a passed one.
-  Both now announce a skip (suite 50 → 56 cases)
+  Both now announce a skip (suite 50 → 58 cases)
 - **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
   outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
   `/mnt/jol-backup/jol-state-backup` — the destination RB-08/RB-09 used until this change moved ours to

@@ -43,6 +43,7 @@ documents cite them. In numeric order:
 | S2-019 | The custody challenge printed its own secret to stdout, so the transcript could attest without the key | closed same session; fingerprint only now, case 52 |
 | S2-020 | The backup suite depended on a file no CI runner has, so the merge commit would have gone red on four cases | closed; SRC is an input now, runner-shaped census measured 30/22 |
 | S2-021 | `retire_recovery_key.sh` printed the proof-of-custody nonce three times, including in a runnable command line | closed; fingerprint + hidden prompt, retire suite 15 → 20 cases |
+| S2-022 | A custody challenge had no lifetime, and re-packing silently orphaned any packet in transit | closed; 168h bound + warning, backup suite 56 → 58 cases |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -2093,7 +2094,7 @@ precondition contributed nothing and said nothing, so a partial run is indisting
 Both 51 and 52 now announce a skip. This is trap 15's shape again, one layer up: an unreported absence of
 evidence is not a pass, including about the tests themselves.
 
-**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (50 → 52 cases).
+**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (50 → 58 cases).
 
 ### S2-020: the gate that tests the backup script could not run where it is scheduled to run
 
@@ -2176,6 +2177,41 @@ mutation (`md5sum`).
 
 **Files affected:** `scripts/retire_recovery_key.sh`, `Makefile` (`RETIRE=1`), `tests/test_retire_gate.sh`
 (15 → 20), `docs/runbooks.md` RB-08 step 4, `AGENTS.md` §3, `.github/workflows/apply.yml`.
+
+### S2-022: a present-tense claim evidenced by a past-tense token
+
+**Discovered:** 2026-10-28, while answering a narrower question — "is it safe to press Ctrl-C at this
+prompt?"  
+**Status:** CLOSED. Unanswered challenges expire at `PENDING_MAX_H` (168h) and re-packing warns before
+orphaning an in-flight challenge. Cases 57–58, both mutation-verified.  
+**Severity:** S2, same family as S2-019: the attestation is only as good as the moment it was produced.
+
+The operator had run `make backup-pack`, then `make backup-attest` before carrying anything, and the
+hidden prompt was sitting there waiting. Before saying "Ctrl-C is harmless" I tested it, because that
+claim is about a record that gates a destructive step: a refused attempt (`RC=1`), an empty stdin
+(`RC=2`, UNEVALUATED) and an aborted read all leave `offhost-attestation.pending` **byte-identical**
+(`sha256sum` compared before and after, live value `a0d22422edddf116…` unchanged by my probes).
+
+Two defects fell out of the same inspection:
+
+1. **No lifetime on an outstanding challenge.** `attest` compared the token hash and never read `issued=`.
+   A nonce recovered eleven months later — from a drive reformatted last week, a laptop sold, a stick in a
+   drawer — would still write a fresh `attested=` timestamp and buy another 30 days of a healthy
+   `backup-status`. The claim is present tense ("a copy exists elsewhere **and works**"), so the evidence
+   has to be dated too. Now refused past 168 hours, and an undated or unparseable `issued=` is a refusal
+   rather than a pass — same rule as everywhere else here: unverified means no.
+2. **Re-packing silently replaced the pending hash.** That makes any packet already away from this machine
+   permanently unattestable, and the operator then reads a legitimate refusal as "the off-host copy is
+   broken." This happened for real in the session: the packet was re-packed so it would carry a corrected
+   `offhost_rehearsal.sh`, orphaning the first challenge. `pack` now warns, naming the issue time it is
+   about to overwrite. A warning rather than a block, because abandoning a lost packet must stay possible.
+
+**Mutations.** Removing the staleness comparison → case 57 fails (`stale challenge accepted (rc=0)`);
+silencing the warning block → case 58 fails (`re-packing was silent`). Script restored byte-identically
+after each, `md5sum` compared.
+
+**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (56 → 58),
+`docs/runbooks.md` RB-09.
 
 ---
 

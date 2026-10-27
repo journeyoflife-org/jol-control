@@ -725,7 +725,7 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 56 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 58 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
@@ -735,7 +735,7 @@ need neither `age` nor a real state and therefore run in CI (re-measured after t
 22 skipped, exit 0**); the 22 skipped cases additionally need `age` **and** a real `terraform.tfstate`,
 which a runner cannot have (state is gitignored), so they report `SKIPPED` and are announced rather than
 counted as passes.
-Locally: **56 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
+Locally: **58 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
 rules, 51 the default destination, 52 the challenge-token secrecy).
 
 > **CI census, measured 2026-10-27 in a runner-shaped run** (the `age` probe forced off and
@@ -1115,9 +1115,9 @@ to live:
 find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
 
-**Committed harness — 56 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+**Committed harness — 58 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
 refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
-Locally: **56 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
+Locally: **58 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
 pins the default destination; 52 proves `pack` never prints the challenge token, finding S2-019).
 
 **Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;
