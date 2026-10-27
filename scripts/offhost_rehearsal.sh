@@ -69,7 +69,8 @@ pack)
   if [ -e "$OUT" ]; then die "$OUT already exists - remove it deliberately, do not overwrite a packet in flight"; fi
   mkdir -p "$OUT" || die "cannot create $OUT"
 
-  TOKEN="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  TOKEN="${TOKEN:-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
+  [ "${#TOKEN}" -ge 16 ] || die "token is too short to be a challenge nonce"
   printf '%s\n' "$TOKEN" | age --encrypt --recipient "$RECIPIENT" --output "$OUT/attest-challenge.age" || die "could not write the challenge"
   cp -p "$SNAP" "$SNAP.info" "$IDENTITY" "$OUT/" || die "copy failed"
   cp -p "$0" "$OUT/offhost_rehearsal.sh" 2>/dev/null || die "could not copy this script into the packet"
@@ -90,8 +91,12 @@ pack)
   echo
   echo "It prints an ATTEST line. Bring only that line back and run:"
   echo "  make backup-attest TOKEN=<the token it prints>"
-  echo "Here is the local token, for comparison only - it must be obtained by decrypting, not by reading this line:"
-  echo "  $TOKEN"
+  # The token value is deliberately NOT printed here. It is the secret half of a proof-of-possession:
+  # printing it into stdout puts it in terminal scrollback, agent transcripts and any captured log, and
+  # anyone holding the transcript could then attest without holding any key - which is precisely the
+  # difference between evidence and a checkbox. Only the hash fingerprint appears, and only the private
+  # half can recover the value itself.
+  echo "challenge  : token-sha256 $(printf '%s' "$TOKEN" | sha256sum | cut -c1-16)… (value never printed; it must be recovered by decrypting)"
   ;;
 ## --------------------------------------------------------------------------- verify
 verify)

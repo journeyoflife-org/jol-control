@@ -96,19 +96,21 @@ jobs:
         run: python3 tests/test_agents_gate.py
 
       - name: Backup Gate Self-Test (prove the RB-08 script is not inert)
-        # 50 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
-        # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Expected here:
-        # about **24 pass, 26 skip** — the crypto/rehearsal block needs age and a real terraform.tfstate,
-        # and the identity block (46-50) needs a state to read a lineage from. Those figures are computed
-        # from the suite's own skip accounting, not observed on a runner yet; if the merge run disagrees,
-        # correct this comment rather than trusting it. A skipped case is announced, never a pass.
+        # 52 cases over scripts/backup_state.sh, scripts/state_backup_guard.sh, scripts/offhost_rehearsal.sh
+        # and scripts/backup_status.sh: 0 proven / 1 refused / 2 written-but-unverified. Measured in a
+        # runner-shaped run (age probe off, state absent): **30 pass, 22 skip, exit 0**. Reaching that
+        # took a fix: cases 3, 4, 21 and 23 defaulted SRC to $REPO/terraform.tfstate, which no runner has
+        # (state is gitignored), so this step would have FAILED the merge commit with four red cases and
+        # two more passing for an unrelated reason. SRC is now an input of both scripts and those cases
+        # supply a synthetic populated state. A skipped case is announced, never counted as a pass.
         # What the suite pins: an earlier revision wrote plaintext state at the ambient umask and left it on
         # disk on every failure path, a refused same-second re-run deleted the original backup, the sidecar
         # claimed "off-host-verified" for a key whose location was never checked, and the custody packet
         # carried an ABSOLUTE-path manifest that verified the files left at home rather than the copies
         # (cases 33-45, finding S2-017). Case 39 therefore relocates the packet and DELETES the source.
         # Cases 46-50 pin WHOSE snapshot it is: a second tree (jolarca) now writes into the same
-        # destination, and `newest *.age` let its file satisfy this gate (finding S2-018).
+        # destination, and `newest *.age` let its file satisfy this gate (finding S2-018). Case 51 pins the
+        # default DEST at source level; case 52 proves pack never prints the challenge token (S2-019).
         # COVERAGE CAVEAT, stated because it was once written wrong: this workflow triggers on
         # push:branches:[main] only, so a pull request shows NO signal from this step. First real
         # execution is the merge commit. Keep the case count here in step with the suite — it has

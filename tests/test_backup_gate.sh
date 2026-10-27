@@ -131,8 +131,8 @@ else
   sed -n '1,3p' "$W/o" | sed 's/^/          /'
 fi
 run 1 "2 neither RECOVERY_KEY nor RECOVERY_PUB"   "$W/dest" 0 "set RECOVERY_KEY" RECOVERY_KEY="" RECOVERY_PUB=""
-run 1 "3 destination absent"                      "$W/absent" 0 "DEST absent or not writable" RECOVERY_KEY=x
-run 1 "4 destination inside the repository"       "$W/dest" 0 "DEST is inside the repository" DEST="." RECOVERY_KEY=x
+run 1 "3 destination absent"                      "$W/absent" 0 "DEST absent or not writable" SRC="$SYNTH" RECOVERY_KEY=x
+run 1 "4 destination inside the repository"       "$W/dest" 0 "DEST is inside the repository" DEST="." SRC="$SYNTH" RECOVERY_KEY=x
 run 1 "5 SRC is not JSON"                         "$W/dest" 0 "not a populated Terraform state document" SRC="$REPO/Makefile" RECOVERY_KEY=x
 run 1 "6 SRC is valid JSON but not a state doc"   "$W/dest" 0 "not a populated Terraform state document" SRC="$REPO/tests/fixtures/plan_gate/clean.json" RECOVERY_KEY=x
 run 1 "7 SRC is a WIPED state (resources: [])"    "$W/dest" 0 "not a populated Terraform state document" SRC="$WIPED" RECOVERY_KEY=x
@@ -145,7 +145,7 @@ run 2 "9 state-gate unreachable -> not certified" "$W/dest" 0 "state_gate.py not
 # nvme0n1 reproduces exactly the layout this host had before RB-08 existed. Numbered past 20 so the
 # crypto block keeps its own labels. These cannot use the generic run() helper, which pins the
 # different-disk stub; the refusal needs its own PATH.
-if PATH="$W/binsame:$W/bin:$PATH" timeout 60 env DEST="$W/dest" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1; then
+if PATH="$W/binsame:$W/bin:$PATH" timeout 60 env DEST="$W/dest" SRC="$SYNTH" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1; then
   fail=$((fail+1)); printf '  FAIL  %-46s accepted a same-disk destination\n' "21 refusal names the disk"
 elif grep -q 'SAME physical disk' "$W/o"; then
   pass=$((pass+1)); printf '  ok    %-46s RC=1 and names the disk\n' "21 refusal names the disk"
@@ -163,7 +163,7 @@ fi
 # is fine: the assertion is about the wording, not the code.
 mkdir -p "$W/binvoid"; printf '#!/bin/sh\n' > "$W/binvoid/lsblk"; chmod +x "$W/binvoid/lsblk"
 cp "$W/bin/findmnt" "$W/bin/date" "$W/binvoid/" 2>/dev/null; chmod +x "$W/binvoid"/*
-PATH="$W/binvoid:$W/bin:$PATH" timeout 60 env DEST="$W/dest" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1
+PATH="$W/binvoid:$W/bin:$PATH" timeout 60 env DEST="$W/dest" SRC="$SYNTH" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1
 if grep -q 'UNVERIFIED' "$W/o" && grep -q 'could not be resolved' "$W/o"; then
   pass=$((pass+1)); printf '  ok    %-46s (it refuses to claim it)\n' "23 unresolvable disk is not a pass"
 else
@@ -335,13 +335,13 @@ if [ -f "$GUARD" ]; then
   else fail=$((fail+1)); echo "  FAIL  29 succeeded without saying why"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
   # Stale snapshot: the guard must try, and the inner script's device check must stop it (this
   # destination is a temp dir on the state's own disk), surfacing as a refusal not a pass.
-  g 1 "30 stale, dest on the state's disk -> refuse" RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" MAX_AGE_H=0
+  g 1 "30 stale, dest on the state's disk -> refuse" RECIPIENT_FILE="$REC" DEST="$GD" REPO="$REPO" SRC="$SYNTH" MAX_AGE_H=0
   if [ "$(find "$GD" -type f | wc -l)" = 2 ]; then pass=$((pass+1)); echo "  ok    31 refused run left no artefact behind (snapshot + its sidecar only)"
   else fail=$((fail+1)); echo "  FAIL  31 artefacts left by a refused run: $(find "$GD" -type f | wc -l) (want 2)"; fi
   # A non-numeric clock must produce UNEVALUATED, not a bash arithmetic crash.
   mkdir -p "$W/baddate"; printf '#!/bin/sh\necho 19700101T000000Z\n' > "$W/baddate/date"; chmod +x "$W/baddate/date"
   brc=0; timeout 120 env PATH="$W/nolog:$W/baddate:/usr/bin:/bin" RECIPIENT_FILE="$REC" DEST="$GD" \
-      REPO="$REPO" MAX_AGE_H=24 bash "$GUARD" </dev/null >"$W/go" 2>&1 || brc=$?
+      REPO="$REPO" SRC="$SYNTH" MAX_AGE_H=24 bash "$GUARD" </dev/null >"$W/go" 2>&1 || brc=$?
   if [ "$brc" = 2 ] && grep -q 'cannot compute snapshot age' "$W/go"; then
     pass=$((pass+1)); printf '  ok    %-46s RC=2, named the cause\n' "32 broken date -> UNEVALUATED"
   else fail=$((fail+1)); printf '  FAIL  %-46s RC=%s\n' "32 broken date -> UNEVALUATED" "$brc"; sed -n '1,2p' "$W/go" | sed 's/^/          /'; fi
@@ -448,16 +448,17 @@ fi
 # `newest *.age` glob let its file satisfy ours - `RC=0 nothing to do` while the jol-control inventory
 # was hours stale. Three separate holes were in that one line: no name pinning, no future-mtime rule
 # (a 2099 mtime logged "-632713h old (< 24h)" and passed), and no proof the snapshot protects THIS
-# state. Needs jq, the guard, and a real terraform.tfstate to read a lineage from, so it SKIPs on a
-# runner that has no state - never a silent pass.
+# state. Needs jq and the guard; the lineage is read from the synthetic fixture, so these run on a CI
+# runner with no inventory too. They used to require a real terraform.tfstate and therefore skipped
+# there - which is how four neighbouring cases were left failing in CI instead of being caught here.
 # ─────────────────────────────────────────────────────────────────────────────
-if [ -f "$GUARD" ] && [ -s "$REPO/terraform.tfstate" ]; then
-  LIVE_LIN_TEST=$(jq -r '.lineage // empty' "$REPO/terraform.tfstate" 2>/dev/null || true)
+if [ -f "$GUARD" ] && [ -s "$SYNTH" ]; then
+  LIVE_LIN_TEST=$(jq -r '.lineage // empty' "$SYNTH" 2>/dev/null || true)
   SD="$W/sep"; mkdir -p "$SD"
   printf 'age1testonlytest\n' > "$SD/rec"
   gsay(){ sed -n 's/.*state-backup-guard\[[0-9]*\]: //p' "$W/gs"; }
   rung(){ local want=$1 label=$2 says=$3 nosay=$4; shift 4
-    local rc=0; timeout 180 env REPO="$REPO" RECIPIENT_FILE="$SD/rec" "$@" \
+    local rc=0; timeout 180 env PATH="$W/nolog:/usr/bin:/bin" REPO="$REPO" SRC="$SYNTH" RECIPIENT_FILE="$SD/rec" "$@" \
       bash "$GUARD" </dev/null >"$W/gs" 2>&1 || rc=$?
     local v=ok
     [ "$rc" = "$want" ] || v="RC=$rc want=$want"
@@ -497,7 +498,7 @@ if [ -f "$GUARD" ] && [ -s "$REPO/terraform.tfstate" ]; then
     DEST="$SD/d" MAX_AGE_H=999999
   rm -rf "$SD"
 else
-  skip=$((skip+5)); echo "  SKIP   guard or a real terraform.tfstate absent - 5 identity cases not evaluated"
+  skip=$((skip+5)); echo "  SKIP   guard or synthetic state absent - 5 identity cases not evaluated"
 fi
 
 # 51: the scheduled destination is a source-level fact, not a hope. The cron line runs
@@ -512,19 +513,50 @@ if [ -f "$GUARD" ] && [ -f "$ST" ] && [ -f "$RH" ]; then
     grep -q "DEST=\"\${DEST:-$NEWDEST}\"" "$f" || bad_default="$bad_default $(basename "$f")"
   done
   if [ -n "$bad_default" ]; then fail=$((fail+1)); echo "  FAIL  51 default DEST not pinned in:$bad_default"
-  elif grep -rl 'DEST="${DEST:-/mnt/jol-backup/jol-state-backup}"' "$REPO/scripts" >/dev/null 2>&1; then
+  elif grep -rl "DEST=\"\${DEST:-/mnt/jol-backup/jol-state-backup}\"" "$REPO/scripts" >/dev/null 2>&1; then
     fail=$((fail+1)); echo "  FAIL  51 a script still defaults to the shared legacy directory"
   else pass=$((pass+1)); echo "  ok    51 all three consumers default to $NEWDEST (and none to the legacy path)"; fi
+else
+  skip=$((skip+1)); echo "  SKIP   51 consumers absent - default-DEST pinning not evaluated"
+fi
+
+# 52: the challenge token must never reach stdout. It is the secret half of a proof-of-possession, so
+# printing it puts the ability to attest into terminal scrollback, agent transcripts and captured logs -
+# anyone with the transcript could then attest without holding any key, collapsing "evidence" back into
+# "checkbox". The token is injected here as a known constant, which is the only way to assert absence
+# non-vacuously: with a random token, `grep -q` for it would pass no matter what the script printed.
+if [ -f "$RH" ] && command -v age >/dev/null 2>&1 && [ -n "${KB:-}" ] && [ -d "${KB:-}" ]; then
+  KNOWN=0123456789abcdef0123456789abcdef
+  rc=0; timeout 120 env KEYDIR="$KB" DEST="$DB" REPO="$HB" RECIPIENT_FILE="$KB/offdisk-recipient.txt" \
+      OUT="$KB/packet-tok" TOKEN="$KNOWN" bash "$RH" pack </dev/null >"$W/tok" 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then
+    fail=$((fail+1)); printf '  FAIL  %-46s pack exited %s\n' "52 pack hides the challenge token" "$rc"; sed -n '1,3p' "$W/tok" | sed 's/^/          /'
+  elif grep -qF "$KNOWN" "$W/tok"; then
+    fail=$((fail+1)); echo "  FAIL  52 pack printed the token value - custody could be attested from the transcript"
+  elif ! grep -q 'token-sha256' "$W/tok"; then
+    fail=$((fail+1)); echo "  FAIL  52 no fingerprint printed, so the operator cannot match the challenge"
+  elif ! grep -qF "$(printf '%s' "$KNOWN" | sha256sum | cut -c1-16)" "$W/tok"; then
+    fail=$((fail+1)); echo "  FAIL  52 printed fingerprint does not match the injected token's hash"
+  else
+    pass=$((pass+1)); echo "  ok    52 pack hides the token and prints its fingerprint"
+  fi
+  rm -rf "$KB/packet-tok" "$W/tok"
+else
+  # Announced, never silent: a case that can contribute nothing must say so, or "52 passed" from a
+  # machine that ran 51 of them reads identical to a full run. This exact silence is what made an early
+  # mutation result here uninterpretable.
+  skip=$((skip+1)); echo "  SKIP   52 rehearsal or age absent - token-leak case not evaluated"
 fi
 
 echo "---"
 echo "backup-gate self-test: $pass passed, $fail failed, $skip skipped"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail backup-gate violation(s)"; exit 1; fi
 if [ "$pass" -lt 24 ]; then
-  # 24 is the measured census of cases that run with `age` hidden and no real state: guards 1-9,
-  # device cases 21-23, repo/fence/umask 18-20, and the scheduled-refresh block 24-32. Measured from
-  # an actual hidden-age run, not guessed - a threshold under the true count turns a broken suite
-  # green, and one above it makes every CI run red, which is the S1-012 failure mode again.
+  # Measured on 2026-10-27 in a runner-shaped run (age probe forced off, terraform.tfstate absent):
+  # **30 passed, 22 skipped**. The floor is deliberately 24, below that census: it catches a suite that
+  # stopped running whole blocks (the failure this floor was written for) without turning red merely
+  # because one runner lacks an optional tool - a false alarm that trains people to ignore a gate is the
+  # S1-012 failure mode. Cases that cannot run announce themselves as SKIP; none of them count as a pass.
   echo "UNEVALUATED — only $pass cases ran; the guard set is incomplete, this is not a pass"; exit 2
 fi
 if [ "$skip" -gt 0 ] && [ "$pass" -lt 24 ]; then

@@ -63,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 50 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 52 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
   unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
@@ -342,9 +342,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **S2-020 — the backup suite could not run where it is scheduled to run.** Its own header says the guard
+  cases need "jq only — these run anywhere", but cases 3, 4, 21 and 23 invoked `backup_state.sh` without
+  `SRC`, defaulting it to `$REPO/terraform.tfstate` — gitignored, so absent from every checkout. Run under
+  runner conditions, the merge commit would have been **red on four cases**, and two of those returned the
+  expected exit code for the wrong reason (a missing input, not the guard under test). `SRC` is now an
+  explicit input of `state_backup_guard.sh` too, forwarded to the backup script, and the lineage
+  cross-check reads the *same* file it protects; the guard cases supply the synthetic populated state that
+  already existed for case 9, and the identity cases (46-50) now execute in CI rather than skipping there.
+  Measured runner-shaped census after the fix: **30 passed, 22 skipped, exit 0**; locally **52 passed, 0
+  failed**. No behaviour change on this host — the default is still `$REPO/terraform.tfstate`
+- **S2-019 — the custody challenge printed its own answer.** `offhost_rehearsal.sh pack` ended by echoing
+  the nonce it had just encrypted to the off-device recipient ("for comparison only"). That nonce *is* the
+  proof: recovering it on the far machine is what turns an attestation from an assertion into evidence.
+  Printing it put the answer in terminal scrollback, IDE local history and this session's transcript, from
+  any of which a machine holding no key could run `make backup-attest` and have `ATTESTED` recorded —
+  while the gate kept refusing replays and looked entirely healthy. `pack` now prints only
+  `token-sha256 <prefix>…` and honours a `TOKEN` override so absence can be asserted non-vacuously
+  (case 52: value absent, fingerprint present, fingerprint equals the hash of the injected token).
+  Reverting the fix in place makes the suite report `51 passed, 1 failed` naming the leak. **The harness
+  was the second bug**: a first mutation run looked "undetected" because it printed an exit code without
+  the census, and cases 51/52 had no `else` — a skipped case was indistinguishable from a passed one.
+  Both now announce a skip (suite 50 → 52 cases)
 - **S2-018 — another project's backup was passing this project's freshness gate.** A cron line added
   outside this session by the jolarca tree writes `terraform.tfstate.s17.*.age` into
-  `/mnt/jol-backup/jol-control`, the destination RB-08/RB-09 chose for our state. Every consumer
+  `/mnt/jol-backup/jol-state-backup` — the destination RB-08/RB-09 used until this change moved ours to
+  `jol-control`. Every consumer
   picked "newest `*.age`", so its file satisfied our guard: measured live, `OK: newest snapshot is 0h old
   (< 24h) - nothing to do` exit **0** while our own snapshot was hours old, and `make backup-status`
   printed the foreign file as ours. A planted 2099 mtime also passed as `newest snapshot is -632713h old

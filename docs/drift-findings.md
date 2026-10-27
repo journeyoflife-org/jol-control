@@ -40,6 +40,8 @@ documents cite them. In numeric order:
 | S2-016 | The estate's alerting chain is non-functional end to end, so no scheduled failure can notify anyone | open; `make backup-status` is the interim pull |
 | S2-017 | The custody rehearsal shipped in `c4eb8b6` was defective four times over, and the gate beside it could never report success | closed by replacement; 13 cases added |
 | S2-018 | A second project began writing its own snapshots into this backup's destination and satisfied the freshness gate with them | closed; name, clock and lineage all now checked, 5 cases added |
+| S2-019 | The custody challenge printed its own secret to stdout, so the transcript could attest without the key | closed same session; fingerprint only now, case 52 |
+| S2-020 | The backup suite depended on a file no CI runner has, so the merge commit would have gone red on four cases | closed; SRC is an input now, runner-shaped census measured 30/22 |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -2008,8 +2010,10 @@ mode ever separated them.
 someone else's artefact is worse than no control, because it stops the refresh that would have saved us.
 
 **What happened.** A thirteenth line appeared in jol's crontab, added outside this session by the
-`jolarca` tree: `17 4 * * * cd /opt/jolarca/repos/jolarca-control && BACKUP_DEST=/mnt/jol-backup/jol-control …`.
-That destination is the one RB-08/RB-09 chose for `terraform.tfstate`. Its output landed beside mine:
+`jolarca` tree. Observed on the host at 22:42, quoted as seen — *this* project renamed that directory
+afterwards, and the line below is the record of what was there, not the current path:
+`17 4 * * * cd /opt/jolarca/repos/jolarca-control && BACKUP_DEST=/mnt/jol-backup/jol-state-backup …`.
+That destination was the one RB-08/RB-09 chose for `terraform.tfstate`. Its output landed beside mine:
 three `terraform.tfstate.s17.*.age` files (100,670 bytes each), newest written 22:42 — minutes before
 this was noticed.
 
@@ -2041,14 +2045,90 @@ the prose contradicted the verdict. It is the same shape as measurement trap 15:
 right words and enforces nothing reads correct in a log review. `MISMATCH` now gates the shortcut, and
 case 48 asserts the forbidden phrase, not just the exit code.
 
-**Residual, operator's call.** Two projects writing one directory is fragile even with name pinning: a
-`rm -rf` aimed at one can hit the other, and nothing separates their retention. Either give each tree its
-own subdirectory on that disk (`/mnt/jol-backup/jol-control/` vs `/mnt/jol-backup/jolarca/`) or move the
-jolarca job elsewhere. This repository will not edit another organization's crontab line — that is
-jolarca's control plane, not this one's.
+**Residual, operator's call.** Two projects writing one disk is still fragile: this repository now keeps
+its own subdirectory, but the jolarca job still points at `jol-state-backup`. Its line is theirs to change
+and this project will not edit another organization's crontab — the durable fix is for that job to target
+`/mnt/jol-backup/jolarca-control`, which is the pattern this tree now follows.
 
 **Files affected:** `scripts/state_backup_guard.sh`, `scripts/backup_status.sh`,
 `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (45 → 50), `docs/runbooks.md` RB-08/RB-09.
+
+### S2-019: the proof-of-possession printed the thing only a possessor could produce
+
+**Discovered:** 2026-10-27, reviewing `scripts/offhost_rehearsal.sh` immediately before handing it to the
+operator — i.e. five commits after it was written  
+**Status:** CLOSED. `pack` now prints `token-sha256 <first 16 hex>…` and never the value; case 52 pins it.  
+**Severity:** S2, but it defeats the exact property S2-014 asked for, so worth stating plainly.
+
+`pack` ended with `echo "Here is the local token, for comparison only"; echo "  $TOKEN"`. The token is a
+nonce encrypted to the off-device recipient; recovering it on the far machine is what makes the
+attestation evidence rather than an assertion. Printing it on this host puts the answer in terminal
+scrollback, in IDE local history, in this session's transcript file and in anything that captures stdout.
+Anyone holding the transcript could then run `make backup-attest TOKEN=…` from a machine with no key and
+get `ATTESTED` written — the gate would still fire, still refuse replays, and certify nothing.
+
+The comment said "for comparison only", which is how this class of defect always reads at the time: a
+developer convenience that survives into the shipped path. It also contradicted a rule already recorded
+on this host — generated secrets go to a 600 file, stdout gets a fingerprint.
+
+**How the fix was proven non-vacuous.** Case 52 injects a *known* token (`TOKEN=01234567…`, the script
+now honours `TOKEN` as an override) and asserts three things: the value is absent from stdout, a
+`token-sha256` line exists, and its printed prefix equals the hash of that known value. Reverting the
+fix in place — printing the token again — makes the suite report `51 passed, 1 failed` naming
+`pack printed the token value`; removing only the fingerprint also fails. Both mutations restored the
+file byte-identically (`md5sum` compared each time).
+
+**A second finding, about the harness:** the first mutation run was reported here as "undetected" because
+the command printed only an exit code and not the census, and the case had **no `else` branch** — a failed
+precondition contributed nothing and said nothing, so a partial run is indistinguishable from a full one.
+Both 51 and 52 now announce a skip. This is trap 15's shape again, one layer up: an unreported absence of
+evidence is not a pass, including about the tests themselves.
+
+**Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (50 → 52 cases).
+
+### S2-020: the gate that tests the backup script could not run where it is scheduled to run
+
+**Discovered:** 2026-10-27, while answering "what will the merge commit actually show?"  
+**Status:** CLOSED. `SRC` is an input of `backup_state.sh` and `state_backup_guard.sh`; cases 3, 4, 21, 23
+supply a synthetic populated state. Measured runner-shaped census: **30 passed, 22 skipped, exit 0**.  
+**Severity:** S2, but note what it would have caused: a red check on the merge commit of a branch whose
+only sin is honest testing — the exact condition that trained this organization to click `--admin`.
+
+The suite header claims its guard cases need "jq only — these run anywhere". Four of them did not:
+cases 3, 4, 21 and 23 invoked `backup_state.sh` without `SRC`, so it defaulted to
+`$REPO/terraform.tfstate` — a file that is **gitignored** and therefore absent from every checkout.
+With the state moved aside to simulate a runner, the output was:
+
+```
+FAIL  3 destination absent          RC=1 want=1  missing-expected-text
+        FAIL: source missing or 0 bytes: /opt/jol/repos/jol-control/terraform.tfstate
+FAIL  4 destination inside the repository   … same cause
+FAIL  21 refusal names the disk            refused, but not for the disk
+FAIL  23 unresolvable disk is not a pass   … same cause
+```
+
+Two of those are the worse kind: `RC=1` matched the expectation while the *reason* was a missing input, so
+the same default would have made neighbouring assertions pass vacuously (trap 16 again). The guard block had
+the same dependency one layer in: `state_backup_guard.sh` hard-wired the state path for its lineage
+cross-check, so cases 46–50 skipped on a runner rather than running.
+
+**Fix.** `SRC="${SRC:-$REPO/terraform.tfstate}"` in both scripts, forwarded guard → `backup_state.sh`, and
+the lineage check reads the same `$SRC` it is backing up — otherwise "whose state is this" gets answered
+about a different file than the one being protected. Guard cases pass `SRC="$SYNTH"`, the fixture that
+already existed for case 9 (lineage `test-lineage-0000`), and cases 46–50 read their lineage from it too,
+so the identity rules now execute in CI instead of skipping there.
+
+**Method note, because it is the reusable part:** the discovery came from *running the suite under the
+conditions its own header claims*, not from reading it. A mirror tree was tried first and produced eight
+unrelated failures from path resolution, which taught nothing; the useful instrument was a copy of the
+suite placed **inside** the repository (`tests/.ci-sim*.sh`, deleted immediately, `git status` verified
+afterwards) with the `age` probe forced false and the real state moved aside and restored, `md5sum` +
+`terraform state list | wc -l` confirming the restore. Temporarily relocating `terraform.tfstate` is not a
+casual act on this host — it is the file that has been destroyed once here by a `mktemp` without `cd`
+(S2-012) — so it was done only inside a block that restores it in the same command and re-verifies.
+
+**Files affected:** `scripts/backup_state.sh`, `scripts/state_backup_guard.sh`,
+`tests/test_backup_gate.sh`, `.github/workflows/apply.yml`, `docs/runbooks.md` RB-08.
 
 ---
 

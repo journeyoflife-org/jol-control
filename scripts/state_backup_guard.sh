@@ -19,6 +19,13 @@ umask 077
 
 REPO="${REPO:-/opt/jol/repos/jol-control}"
 DEST="${DEST:-/mnt/jol-backup/jol-control}"
+# SRC is the state this guard protects. It used to be implicit (`$REPO/terraform.tfstate` inside
+# backup_state.sh), which made the scheduled path untestable without a real inventory: on a CI runner
+# four cases died on "source missing" before reaching the guard they claimed to exercise, and two more
+# returned the expected exit code for that unrelated reason. Overridable here, forwarded below, and the
+# lineage cross-check reads the same file, so "whose state is this" is always answered about the right
+# one.
+SRC="${SRC:-$REPO/terraform.tfstate}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$HOME/.config/age/offdisk-recipient.txt}"
 MAX_AGE_H="${MAX_AGE_H:-24}"          # refresh if the newest snapshot is older than this
 LOG_TAG="${LOG_TAG:-state-backup-guard}"
@@ -81,7 +88,7 @@ if [ -n "$NEWEST" ]; then
   fi
   # Cross-check the identity of the snapshot against the state it is supposed to protect. Timestamps
   # are trivially forged; the lineage is a UUID terraform generated once per state file.
-  LIVE_LIN="$(jq -r '.lineage // empty' "$REPO/terraform.tfstate" 2>/dev/null)"
+  LIVE_LIN="$(jq -r '.lineage // empty' "$SRC" 2>/dev/null)"
   SN_LIN="$(sed -n 's/^lineage  *: //p' "$NEWEST.info" 2>/dev/null)"
   # MISMATCH=1 forces a refresh past the freshness shortcut. An earlier revision of this block printed
   # "DIFFERENT inventory - refreshing anyway" and then fell into the `nothing to do` branch and exited 0,
@@ -107,7 +114,7 @@ else
   say "refresh due: no snapshot present in $DEST"
 fi
 
-OUT="$(cd "$REPO" && DEST="$DEST" RECOVERY_PUB="$RECIPIENT" bash scripts/backup_state.sh 2>&1)"; rc=$?
+OUT="$(cd "$REPO" && DEST="$DEST" SRC="$SRC" RECOVERY_PUB="$RECIPIENT" bash scripts/backup_state.sh 2>&1)"; rc=$?
 printf '%s\n' "$OUT" | while IFS= read -r line; do say "  $line"; done
 case "$rc" in
   0) say "OK: backup refreshed and both custody paths proven"; exit 0 ;;

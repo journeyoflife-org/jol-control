@@ -717,23 +717,26 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 50 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+**Committed harness — 52 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
 fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
 trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
 so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
 level, because the suite provably cannot detect its removal behaviourally. Cases 24–32 cover
-`scripts/state_backup_guard.sh`, the scheduled front door described in RB-09. **Twenty-four** cases
-need neither `age` nor a real state and therefore run in CI (measured in a mirror tree with the crypto
-block forced off: **24 passed, 21 skipped, exit 0**); the 21 skipped cases additionally need `age` **and**
-a real `terraform.tfstate`, which a runner cannot have (state is gitignored), so they report `SKIPPED`
-and are announced rather than counted as passes.
-Locally: **50 passed, 0 failed, 0 skipped** (cases 33–45 are the custody rehearsal, 46–50 the snapshot
-identity rules).
+`scripts/state_backup_guard.sh`, the scheduled front door described in RB-09. **Thirty** cases
+need neither `age` nor a real state and therefore run in CI (re-measured after the `SRC` fix: **30 passed,
+22 skipped, exit 0**); the 22 skipped cases additionally need `age` **and** a real `terraform.tfstate`,
+which a runner cannot have (state is gitignored), so they report `SKIPPED` and are announced rather than
+counted as passes.
+Locally: **52 passed, 0 failed, 0 skipped** (33–45 the custody rehearsal, 46–50 the snapshot identity
+rules, 51 the default destination, 52 the challenge-token secrecy).
 
-> **CI census caveat, stated rather than computed:** the figures above were measured by forcing the
-> optional blocks off in a copy. On a real runner the two identity cases (46–50) also skip for want of a
-> `terraform.tfstate`, so expect roughly **24 passed / 26 skipped**. The merge commit is the first
-> observation; correct this line if it disagrees, as it has been corrected twice before.
+> **CI census, measured 2026-10-27 in a runner-shaped run** (the `age` probe forced off and
+> `terraform.tfstate` moved aside): **30 passed, 22 skipped, exit 0**, with the skips announced as
+> `13 rehearsal + 8 crypto + 1 token + …`. Getting here required a fix: cases 3, 4, 21 and 23 defaulted
+> `SRC` to `$REPO/terraform.tfstate`, which no runner has, so the first CI-shaped run failed four cases
+> outright and two others returned the expected code for an unrelated reason. `SRC` is now an input of
+> both `backup_state.sh` and the guard, and those cases pass a synthetic populated state. The merge commit
+> is the first execution on a real runner; correct this line if it disagrees, as it has twice before.
 
 The suite was falsified rather than trusted. Nine defects that were fixed were each reintroduced into
 a **throwaway copy** — never the working tree — and every one is caught by a named behavioural case:
@@ -1017,7 +1020,7 @@ backup-status` is the interim: one pull, 0/1/2, that re-derives the disk separat
 trusting the sidecar and refuses to report anything it cannot see as a pass.
 
 **The destination is shared — check whose snapshot you are looking at.** Since 2026-10-27 the jolarca
-tree also writes its state backups into `/mnt/jol-backup/jol-control` (`terraform.tfstate.s17.*.age`,
+tree also wrote its state backups into `/mnt/jol-backup/jol-state-backup` (`terraform.tfstate.s17.*.age`,
 via its own cron line). Selecting "newest `*.age`" therefore let **another project's** backup satisfy this
 repository's freshness gate: the guard logged `nothing to do` and exited 0 while our own snapshot was
 hours old (finding **S2-018**). Three rules now hold in every consumer here — the snapshot name is pinned
@@ -1089,9 +1092,10 @@ to live:
 find "$PWD" -maxdepth 1 -type f -exec shred -u {} + && rmdir "$PWD"
 ```
 
-**Committed harness — 50 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
+**Committed harness — 52 cases** (`make test`, of which 33-45 are this rehearsal: packet shape, staging
 refusals, relocation with the source **deleted**, token round trip, replay, tamper, wrong identity).
-Locally: **50 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018).
+Locally: **52 passed, 0 failed, 0 skipped** (46-50 are the snapshot-identity rules, finding S2-018; 51
+pins the default destination; 52 proves `pack` never prints the challenge token, finding S2-019).
 
 **Rollback.** This rehearsal only reads and writes under `~/.config/age/` plus its own packet directory;
 `terraform.tfstate` is opened for reading by the backup script, never here. Removing
