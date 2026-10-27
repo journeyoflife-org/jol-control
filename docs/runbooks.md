@@ -349,16 +349,30 @@ no runbook — recovery depended on searching the filesystem for it.
 
 Measured on this host, 2026-10-27:
 
-| Path | Block device | Same physical disk as the state? |
-|---|---|---|
-| `/opt/jol/repos/jol-control/terraform.tfstate` | `nvme0n1p8` | — (this is the reference) |
-| `/opt/jol/backup/tfstate/*.age` | `nvme0n1p6` | **yes** — one NVMe holds the inventory and every copy of it |
-| `/media/jol/32f7e56a-…` (`sdb1`, 285 G total, **270 G free**) | `sdb1` | **no — a different disk** |
+| Path | Device | Model / medium | Same physical disk as the state? |
+|---|---|---|---|
+| `/opt/jol/repos/jol-control/terraform.tfstate` | `nvme0n1p8` | NVMe SSD | — (this is the reference) |
+| `/opt/jol/backup/tfstate/*.age` | `nvme0n1p6` | **the same NVMe** | **yes** — one die held the inventory and every copy of it |
+| `/media/jol/32f7e56a-…/jol-state-backup` | `sdb1` | Seagate **ST9320423AS**, 298 G, SATA, **rotational** (`ROTA=1`) | **no — a different disk, same chassis** |
 
-So `sdb1` closes the measured gap (one NVMe currently holds the inventory and every copy of it).
-It does **not** cover fire, theft or total host loss — that needs a destination outside the machine,
-and the documented offsite tier elsewhere in this estate is a second object-storage bucket at
-another provider, not a second disk in the same box.
+So `sdb1` closes the measured gap, and `backup_state.sh` now *verifies* it rather than trusting the
+operator: it resolves the block device under both paths (`findmnt --target` → `lsblk -no PKNAME`) and
+**refuses** when they are the same disk. That check is what the earlier revision wrongly listed as a
+limitation it could not perform.
+
+**Two facts about that disk an operator must know before relying on it:**
+
+1. **It is mounted by the desktop session, not by the system.** `/etc/fstab` holds **no** entry for it
+   (`grep -c media /etc/fstab` → 0); the systemd unit is generated from `/proc/self/mountinfo`, and the
+   path itself is the filesystem UUID. After a headless boot, a crash recovery, or any start without a
+   GUI login, **`/media/jol/32f7e56a-…` does not exist** — and the Restore half below would find no
+   candidates and conclude the off-disk copies are gone. Preflight it, and see step 3 for the mount
+   command. The durable fix is a stable boot mount (`/etc/fstab` by UUID, or a `.mount` unit) — a host
+   configuration change, so it is an owner decision and is not performed by this runbook.
+2. **It is a spinning 2012-era laptop drive sharing this machine's power supply and backplane.** It
+   protects against NVMe failure. It does not protect against surge, fire, theft, or the loss of the
+   host, and its SMART health is **unverified here** (`smartctl` needs a password). A backup on the
+   oldest disk in the box is a real improvement and a weak end state.
 
 ### Creating a backup
 
@@ -367,7 +381,15 @@ another provider, not a second disk in the same box.
 **AGE-1** in `docs/SECRETS_INVENTORY.md`); a **second** identity held off-host; a destination on a
 different block device.
 
-1. Mint the recovery identity **outside** any auto-cleaned directory. `/tmp` is on-disk here
+1. **Preflight, because this destination is a session automount.** Confirm the disk is mounted and is
+   genuinely a different device before treating a failure as something else — the script enforces the
+   second point, but the first is what the operator sees first:
+   ```bash
+   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
+   ls -ld "$D" 2>&1 || udisksctl mount -b /dev/sdb1
+   lsblk -no PKNAME "$(findmnt -no SOURCE --target "$D")"   # expect sdb, not nvme0n1
+   ```
+2. Mint the recovery identity **outside** any auto-cleaned directory. `/tmp` is on-disk here
    (`D /tmp 1777 root root 30d`), so it survives a reboot but is reaped after 30 days — never put
    long-lived key material in it.
 
@@ -385,9 +407,9 @@ different block device.
    Then **move the identity file off this machine.** The script below can prove the two recipient
    strings differ; it cannot prove one of the keys is physically elsewhere. That is a human step, and
    skipping it makes the whole exercise decorative.
-2. Back up with **`scripts/backup_state.sh`**, which is the block below verbatim — the file is
-   extracted from this fence, and `tests/test_backup_gate.sh` fails if the two diverge. Run it
-   directly, or through `make backup-state`:
+3. Back up with **`scripts/backup_state.sh`**, which is the block below verbatim — the file is
+   extracted from this fence, and case 19 of `tests/test_backup_gate.sh` fails if the two diverge. Run
+   it directly, or through `make backup-state`:
    ```bash
    make backup-state DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
                      RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj
@@ -444,6 +466,26 @@ different block device.
      "$REPO"|"$REPO"/*) echo "FAIL: DEST is inside the repository ($DEST_ABS). Ciphertext - and on a"
                         echo "      hard failure its plaintext sibling - must never land in a git tree."; exit 1;;
    esac
+
+   # The whole point of this runbook is a copy on a DIFFERENT PHYSICAL DISK, and writability cannot
+   # tell you that: two paths can sit on different filesystems of one device, which is exactly how
+   # this host was configured (live state on nvme0n1p8, its old backups on nvme0n1p6 - one NVMe).
+   # findmnt --target names the filesystem, lsblk -no PKNAME names the disk underneath it.
+   disk_of(){ local s; s="$(findmnt -no SOURCE --target "$1" 2>/dev/null || true)"; [ -n "$s" ] || { echo ""; return; }
+              lsblk -no PKNAME "$s" 2>/dev/null | head -1; }
+   STATE_DISK="$(disk_of "$SRC")"; DEST_DISK="$(disk_of "$DEST_ABS")"
+   DEVICE_CHECK="unevaluated: could not resolve the disk behind one of the two paths"
+   if [ -n "$STATE_DISK" ] && [ -n "$DEST_DISK" ]; then
+     if [ "$STATE_DISK" = "$DEST_DISK" ]; then
+       echo "FAIL: DEST is on the SAME physical disk as the state ($STATE_DISK).";
+       echo "      One device failure would take the inventory and this backup together, which is";
+       echo "      the hazard RB-08 exists to remove. Point DEST at a different disk."; exit 1; fi
+     DEVICE_CHECK="verified-different: state=$STATE_DISK backup=$DEST_DISK"
+   else
+     echo "WARN: the physical disks could not be resolved, so 'different device' is UNVERIFIED."
+     echo "      The backup is still written; the sidecar records it as unevaluated. Do not claim"
+     echo "      off-device protection on the strength of this run."
+   fi
 
    HOST_PUB="$(age-keygen -y "$HOST_KEY")"
    if [ -n "$RECOVERY_KEY" ]; then RECOVERY_PUB="$(age-keygen -y "$RECOVERY_KEY")"; fi
@@ -509,13 +551,19 @@ different block device.
      echo "md5       : $EXPECT_MD5"
      echo "created   : $STAMP"
      echo "recipients: $HOST_PUB $RECOVERY_PUB"
-     echo "off-host-verified: $([ "$RC" = 0 ] && echo yes || echo no)"
+     # Two fields, because two different claims are at stake and conflating them is how a control
+     # gets overstated. "recovery-key-decrypted" is what this run proved. It does NOT say where the
+     # key is kept - a second key held in ~/.config/age on this same host proves nothing about
+     # surviving the loss of this host.
+     echo "recovery-key-decrypted: $([ "$RC" = 0 ] && echo yes || echo no)"
+     echo "recovery-key-location : NOT CHECKED (the script cannot know where any key is held)"
+     echo "device-check          : $DEVICE_CHECK"
    } > "$OUT.info"; chmod 600 "$OUT.info"
    KEEP=1
    echo "OK: backup written and readable; recovery path status stated above (exit 2 = not verified)"
    exit "$RC"
    ```
-   Or invoke it directly. **Use the real filename, not the placeholder** from step 1, and note that
+   Or invoke it directly. **Use the real filename, not the placeholder** from step 2, and note that
    `VAR=value command` scopes the variable **to that command only** — a following
    `cat "$DEST"/*.info` finds `DEST` empty unless you `export` it first. That exact mistake produced
    `cat: '/*.info': No such file or directory` in a real session:
@@ -566,8 +614,10 @@ and that each supplied identity reproduces the source md5. It does **not** and c
 - that the recovery identity is held **off this machine** — the documented invocation currently points
   at `~/.config/age/…`, so a `PASS [recovery-key]` proves a *second* key opens the file, not a *farther*
   one. Until that file leaves the host, S2-012's core risk is untouched;
-- that `DEST` is a different **physical** device — it checks existence, writability and "outside the
-  repository", nothing more;
+- that `DEST` is a different **physical** device — it now does check this (`findmnt --target` then
+  `lsblk -no PKNAME`, refusing when both resolve to one disk), but only when those tools can resolve
+  the paths. When they cannot, the run **warns** and the sidecar records `device-check: unevaluated`;
+  read the sidecar, do not infer off-device protection from a successful exit;
 - that the backup is **recent**, and nothing runs it on a schedule;
 - **disk-full or partial-write** failures beyond what the decrypt catches: the ciphertext is read back
   by `verify`, so a truncated file fails, but a `SIGKILL` between reserving `$OUT` and finishing the
@@ -595,7 +645,7 @@ the destination, and whether any plaintext survived. That matrix is now supersed
 | `RC=1`, original **preserved byte-identical**, file count unchanged | refused same-second re-run |
 
 Then: the `.info` sidecar was read back and carries `serial 306`, `lineage 25425c0f-…`, `resources 4`,
-`instances 119`, the source md5 and `off-host-verified: yes`; a `RECOVERY_PUB`-only ciphertext was
+`instances 119`, the source md5 and the custody/device fields; a `RECOVERY_PUB`-only ciphertext was
 independently opened with the recovery identity and reproduced the source md5; and a sweep of `/tmp`
 found no `.decoded` file and no document that parses as a populated state outside the repository.
 
@@ -611,25 +661,44 @@ backup**; hence the `CREATED` flag, and hence the case that asserts preservation
 refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
 after encrypting, before verifying.
 
-**Committed harness — 20 cases, all eight mutation probes detected.** `tests/test_backup_gate.sh`
-runs `scripts/backup_state.sh` against fixtures built from the shape of a real Terraform 1.16.1 state
- document, in a temp directory that a trap removes. Case 19 extracts the fence above and requires it
- to be **byte-identical** to the script, so this runbook cannot quietly drift from the code it
- describes; case 20 asserts `umask 077` at source level, because the suite provably cannot detect its
- removal behaviourally. Twelve cases need neither `age` nor a real state and therefore run in CI
- (12 passed, 8 skipped, exit 0); the eight crypto cases additionally need `age` **and** a real
- `terraform.tfstate`, which a runner cannot have (state is gitignored), so they report `SKIPPED` and
- are announced rather than counted as passes. Locally: **20 passed, 0 failed**.
+**Committed harness — 23 cases.** `tests/test_backup_gate.sh` runs `scripts/backup_state.sh` against
+fixtures built from the shape of a real Terraform 1.16.1 state document, in a temp directory that a
+trap removes. Case 19 extracts the fence above and requires it to be **byte-identical** to the script,
+so this runbook cannot quietly drift from the code it describes; case 20 asserts `umask 077` at source
+level, because the suite provably cannot detect its removal behaviourally. **Fifteen** cases need
+neither `age` nor a real state and therefore run in CI (15 passed, 8 skipped, exit 0); the eight crypto
+cases additionally need `age` **and** a real `terraform.tfstate`, which a runner cannot have (state is
+gitignored), so they report `SKIPPED` and are announced rather than counted as passes. Locally:
+**23 passed, 0 failed**.
 
-The suite was falsified rather than trusted. Each defect that was fixed was reintroduced into a
-throwaway copy — never the working tree — and the run checked for a **named** case failing:
+The suite was falsified rather than trusted. Nine defects that were fixed were each reintroduced into
+a **throwaway copy** — never the working tree — and every one is caught by a named behavioural case:
 
-| Mutation | Detected by | | Mutation | Detected by |
+| Mutation | Caught by | | Mutation | Caught by |
 |---|---|---|---|---|
-| append one newline to the script | 19 | | drop the `CREATED` guard from the trap | 14, 16 |
-| delete the "DEST inside repository" refusal | 4 | | gate-unreachable returns `0` not `2` | 9 |
-| remove `umask 077` | 20 | | recipient-only mode sets `RC=0` not `2` | 13 |
-| drop the `resources > 0` requirement | 7 | | edit the fence in the document | 19 |
+| neutralise the same-disk comparison | 21 | | drop the `CREATED` guard from the trap | 14, 16 |
+| drop the `resources > 0` requirement | 7 | | gate-unreachable returns `0` not `2` | 9 |
+| delete the in-repo refusal's `exit 1` | 4 | | recipient-only mode sets `RC=0` not `2` | 13 |
+| remove `umask 077` | 20 | | make the same-second reservation always succeed | 12, 13, 14 |
+| accept any recipient as "different" | 10, 11 | | append one newline anywhere in the script | 19 |
+
+**Two ordering assertions exist because exit codes and refusal text were both shown to be insufficient.**
+Every guard case passes a deliberately invalid `RECOVERY_KEY`, so *any* later failure also yields the
+expected `RC=1` — which is how case 7 stayed green after its own guard was deleted, stopped instead by
+the device check. Then asserting the refusal *text* proved insufficient too: deleting only the in-repo
+refusal's `exit 1` still prints that text, and the next guard stops the run, so case 4 would have
+credited a different control with its pass. The helper now requires that (a) `age` was never reached and
+(b) every `FAIL:` line carries the phrase the case is about. Both rules are mutation-tested above.
+
+A case that always fails is as useless as one that always passes, and reads more convincingly: see the
+next paragraph, which is about this suite's own checker being wrong twice.
+
+**Case 21 nearly became a false pass while it was being written, and the lesson is in the suite.** The
+`lsblk` stub inspected `$1`, which is `-no`, not the device — so it returned nothing, the device check
+silently never ran, and the same-disk case still exited 1 because the deliberately-fake identity file
+failed later for an unrelated reason. Right exit code, no proof. Caught only because the assertion also
+requires a verdict line, which came back `no-verdict`; case 21 now additionally asserts that the stubs
+resolved at all, and the rule that every guard case must not reach `age` was written for it.
 
 **How this harness itself was found to be broken twice, which is the reason to run mutations at all.**
 First version of case 19 passed unconditionally: the command carried both a heredoc and `</dev/null`,
@@ -660,18 +729,30 @@ not just a backup you hope is right.
    cp -p terraform.tfstate* "$D/" 2>/dev/null; chmod a-w "$D"/*
    ( cd "$D" && sha256sum * > CHECKSUMS.sha256 )
    ```
-3. **Enumerate the candidates — in BOTH locations.** The set on `/opt/jol/backup` shares one device
-   with the live state; the `sdb1` copies written by the Create half above are the only ones that
-   survive that disk, and they use the same basename convention so one glob shape finds both.
+3. **Enumerate the candidates — in BOTH locations, and say so if one is not mounted.** The set on
+   `/opt/jol/backup` shares one device with the live state; the `sdb1` copies written by the Create half
+   above are the only ones that survive that disk, and they use the same basename convention so one glob
+   shape finds both. **An empty glob on the second path is not evidence that no backup exists**: that
+   mount is created by the desktop session, not by the system, so after a headless boot or a crash the
+   directory simply is not there. Concluding "the backups are gone" from an unmounted path is how a
+   perfectly recoverable inventory gets rebuilt by hand.
    ```bash
+   D=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
    ls -la /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age
-   ls -la /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup/jol-control-terraform.tfstate.*.age
+   if [ -d "$D" ]; then
+     ls -la "$D"/jol-control-terraform.tfstate.*.age
+   else
+     echo "OFF-DISK BACKUP SET NOT VISIBLE - $D is not mounted. Do not judge the restore from this."
+     lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT /dev/sdb        # is the disk present at all?
+     udisksctl mount -b /dev/sdb1                         # session mount; changes nothing permanent
+   fi
    ```
-   Each backup has an `.info` sidecar with the `serial`, `lineage`, `instances`, `md5` and
-   `off-host-verified` recorded at creation. **Read the sidecar first** — it is the "checksum of the
-   state you expect" the prerequisite asks for, and it costs no decryption:
+   Each backup has an `.info` sidecar with `serial`, `lineage`, `instances`, `md5`,
+   `recovery-key-decrypted`, `recovery-key-location` and `device-check` recorded at creation. **Read the
+   sidecar first** — it is the "checksum of the state you expect" the prerequisite asks for, and it costs
+   no decryption:
    ```bash
-   for f in "$DEST"/*.info; do echo "== $(basename "$f")"; cat "$f"; done
+   for f in "$D"/*.info; do echo "== $(basename "$f")"; cat "$f"; done
    ```
 4. **Decrypt to a scratch file and compare metadata — never print state contents.** State carries
    the full inventory of every governed repository; it must not reach a log, a terminal scrollback

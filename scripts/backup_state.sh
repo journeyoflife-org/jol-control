@@ -46,6 +46,26 @@ case "$DEST_ABS" in
                      echo "      hard failure its plaintext sibling - must never land in a git tree."; exit 1;;
 esac
 
+# The whole point of this runbook is a copy on a DIFFERENT PHYSICAL DISK, and writability cannot
+# tell you that: two paths can sit on different filesystems of one device, which is exactly how
+# this host was configured (live state on nvme0n1p8, its old backups on nvme0n1p6 - one NVMe).
+# findmnt --target names the filesystem, lsblk -no PKNAME names the disk underneath it.
+disk_of(){ local s; s="$(findmnt -no SOURCE --target "$1" 2>/dev/null || true)"; [ -n "$s" ] || { echo ""; return; }
+           lsblk -no PKNAME "$s" 2>/dev/null | head -1; }
+STATE_DISK="$(disk_of "$SRC")"; DEST_DISK="$(disk_of "$DEST_ABS")"
+DEVICE_CHECK="unevaluated: could not resolve the disk behind one of the two paths"
+if [ -n "$STATE_DISK" ] && [ -n "$DEST_DISK" ]; then
+  if [ "$STATE_DISK" = "$DEST_DISK" ]; then
+    echo "FAIL: DEST is on the SAME physical disk as the state ($STATE_DISK).";
+    echo "      One device failure would take the inventory and this backup together, which is";
+    echo "      the hazard RB-08 exists to remove. Point DEST at a different disk."; exit 1; fi
+  DEVICE_CHECK="verified-different: state=$STATE_DISK backup=$DEST_DISK"
+else
+  echo "WARN: the physical disks could not be resolved, so 'different device' is UNVERIFIED."
+  echo "      The backup is still written; the sidecar records it as unevaluated. Do not claim"
+  echo "      off-device protection on the strength of this run."
+fi
+
 HOST_PUB="$(age-keygen -y "$HOST_KEY")"
 if [ -n "$RECOVERY_KEY" ]; then RECOVERY_PUB="$(age-keygen -y "$RECOVERY_KEY")"; fi
 # Compares two recipient STRINGS. That detects "you passed the same key twice". It does not prove,
@@ -110,7 +130,13 @@ if [ "$G" -ne 0 ]; then echo "FAIL [state-gate]: exit $G - refusing to certify t
   echo "md5       : $EXPECT_MD5"
   echo "created   : $STAMP"
   echo "recipients: $HOST_PUB $RECOVERY_PUB"
-  echo "off-host-verified: $([ "$RC" = 0 ] && echo yes || echo no)"
+  # Two fields, because two different claims are at stake and conflating them is how a control
+  # gets overstated. "recovery-key-decrypted" is what this run proved. It does NOT say where the
+  # key is kept - a second key held in ~/.config/age on this same host proves nothing about
+  # surviving the loss of this host.
+  echo "recovery-key-decrypted: $([ "$RC" = 0 ] && echo yes || echo no)"
+  echo "recovery-key-location : NOT CHECKED (the script cannot know where any key is held)"
+  echo "device-check          : $DEVICE_CHECK"
 } > "$OUT.info"; chmod 600 "$OUT.info"
 KEEP=1
 echo "OK: backup written and readable; recovery path status stated above (exit 2 = not verified)"

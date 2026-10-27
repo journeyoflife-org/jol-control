@@ -46,15 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a fenced block. It exists because the runbook instructed an operator to run `backup.sh`, a file
   that had never been created, and they got `RC=127`. The script is byte-identical to the fence and that
   identity is now *enforced*, not asserted in a document
-- `tests/test_backup_gate.sh` — 20 self-tests for that script with the repository's three exit codes
+- `tests/test_backup_gate.sh` — 23 self-tests for that script with the repository's three exit codes
   (0 both custody paths proven / 1 refused / 2 written-but-unverified), covering the guard paths (bad
   source, wiped state, absent destination, destination inside the repository, missing recovery input,
-  unreachable gate) and the crypto paths (same-key refusal in both modes, recipient-only `NOT VERIFIED`,
-  same-second collision, artefact permissions, sidecar contents, plaintext survival). Twelve cases need
-  neither `age` nor a real state so they run in CI; eight report `SKIPPED` there and are announced, never
-  counted as passes. **Every fixed defect was re-introduced into a throwaway copy and confirmed to make
-  a named case fail** — eight mutations, eight detections. `make test` runs all five suites and
-  `apply.yml`'s `Dev — Validate` runs this one so it cannot go inert the way a gate once did
+  unreachable gate, same-disk destination, unresolvable destination device) and the crypto paths (same-key
+  refusal in both modes, recipient-only `NOT VERIFIED`, same-second collision, artefact permissions,
+  sidecar contents, plaintext survival). Fifteen need neither `age` nor a real state so they run in CI;
+  eight report `SKIPPED` there and are announced, never counted as passes. **Nine fixed defects were
+  re-introduced into throwaway copies and each was caught by a named behavioural case.** Two ordering
+  assertions were added after mutation testing showed exit codes *and* refusal text were both insufficient
+  on their own (see Fixed below). `make test` runs all five suites. **Caveat, because this claim was wrong
+  once already:** `apply.yml` triggers on `push: branches: [main]`, so this suite has not executed in CI
+  yet — a pull request shows Compliance Scan only, and first real execution is the merge commit
 - `make backup-state` — supplies the arguments to the script, with a usage line naming both custody
   modes and the requirement that `DEST` sit on a different block device
 - Measurement traps 14 and 15 in `docs/drift-findings.md`. **14:** a heredoc and `</dev/null` on the
@@ -274,6 +277,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **The backup suite's guard cases were passing vacuously, twice over.** Every guard case supplies an
+  invalid `RECOVERY_KEY`, so any later failure also returns the expected `RC=1`: with the wiped-state
+  requirement deleted, case 7 was stopped by the *device* check and still passed. Adding a refusal-text
+  assertion was not enough either — deleting only the in-repo refusal's `exit 1` still prints that text
+  while the next guard stops the run, so case 4 credited a different control with its pass. The helper now
+  requires that `age` was never reached **and** that every `FAIL:` line carries the phrase belonging to the
+  case under test. Both rules are proven by mutation, not argued
+- **RB-08's sidecar claimed `off-host-verified: yes` for a key whose location it had never tested.**
+  The field was derived from the exit status, which only means *a second identity decrypted the file*.
+  Because that identity is `~/.config/age/state-recovery-20261027.txt` on the same host as the state,
+  every sidecar written so far asserted off-host custody while the condition was false. Now three
+  separate fields: `recovery-key-decrypted` (proven), `recovery-key-location : NOT CHECKED` (not proven,
+  and unprovable by a local script), and `device-check`. The pattern worth remembering — the one word
+  carrying the risk was the one word nothing could test
+- **A device check was documented as impossible while sitting unused.** The Limitations said the script
+  "does not verify that `sdb1` is a different physical device (it checks writability only)"; `findmnt
+  -no SOURCE --target` into `lsblk -no PKNAME` resolves the disk under a path with no privileges,
+  yielding `nvme0n1` versus `sdb` here. The script now **refuses** a same-disk destination — which
+  rejects the layout this host actually had before any of this (state `p8`, backups `p6`, one die) — and
+  warns plus records `device-check: unevaluated` when resolution is impossible, rather than passing
+  silently
+- **Both halves of RB-08 assumed a mount only a desktop session creates.** `/etc/fstab` holds zero
+  `media` entries and the systemd unit is generated from `/proc/self/mountinfo`, so after a headless boot
+  or a crash `/media/jol/32f7e56a-…` does not exist — and the Restore half globbed that exact path, where
+  an empty result reads as "the off-disk backups are gone". Each half now preflights the mount, names the
+  `udisksctl mount -b /dev/sdb1` recovery, and distinguishes *not mounted* from *nothing there*. The
+  durable fix (a boot mount) is a host change and is left to the owner
+- **The device table described the destination without saying what it is.** `sdb` is a Seagate
+  ST9320423AS, 298 G, SATA, `ROTA=1` — a 2012-era spinning laptop drive sharing the state's supply and
+  backplane. It removes single-NVMe risk and nothing else; SMART health is unverified because `smartctl`
+  needs a password. Recorded as "a real improvement and a weak end state"
+- **`apply.yml`'s step comment understated its own suite** ("18 cases" against 20, then 23) and implied a
+  CI coverage a pull request does not receive. Corrected, with the trigger condition stated inline
+- **A test-harness stub silently voided the check it was written to cover.** The `lsblk` stub read `$1`,
+  which is `-no` rather than the device, so it returned nothing, the device check never ran, and the
+  same-disk case still exited 1 for an unrelated reason (the deliberately fake identity file). Right
+  exit code, no proof. Caught only because the assertion also demands a verdict line, which came back
+  `no-verdict`; the case now additionally proves the stubs resolved
+- **RB-08's Create-half list carried two items numbered `2.`** after a preflight step was inserted, and
+  cross-references pointed at the wrong step numbers; the Restore-half sidecar field name was left
+  pointing at the retired `off-host-verified`. Corrected against the rendered numbering
 - **S2-012** `terraform.tfstate` was destroyed during testing this session — a `mktemp -d` directory
   was created but never entered, so `printf … > terraform.tfstate` and a later `rm -f` acted on the
   live inventory. Recovered **byte-exactly** from `/opt/jol/backup/tfstate/…20261020T125251Z.age`:

@@ -467,6 +467,16 @@ them, and neither changed the enforcement state of anything.
     The fix is structural, not textual: case 19 now distinguishes `SyntaxError`/`Traceback` from a real
     difference and prints which one it found, and a **green baseline is a precondition** for trusting
     any red mutation.
+16. **A guard test that asserts only an exit code is measuring the last thing that failed.** The backup
+    suite's guard cases deliberately pass an invalid `RECOVERY_KEY`, so *any* later stage returning 1
+    satisfies the expectation. Deleting the wiped-state requirement left case 7 green because the device
+    check refused instead — the case passed while its own guard was gone. Asserting the refusal **text**
+    closed that one and opened another: with only the in-repo refusal's `exit 1` deleted, the text is
+    still printed and the *next* guard stops the run, so the case credits a different control. The two
+    rules that survive mutation are: the crypto stage must never be reached, and every `FAIL:` line must
+    carry the phrase of the case under test. Generalised: **name the thing you believe stopped it, and
+    prove the assertion by disabling the thing itself** — an exit code is an aggregate of every check
+    downstream of the one you meant to test.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1465,14 +1475,18 @@ in the same pass; S1-009 was the only omission.
 ### S2-012: an agent destroyed the live `terraform.tfstate`; recovery depended on a backup no runbook named
 
 **Discovered:** 2026-10-27  
-**Status:** RECOVERED byte-exactly. **Partially closed:** `docs/runbooks.md` RB-08 now covers
-creating *and* restoring an encrypted backup, with a verification script tested across 17 cases. An
-independent review of that script found two defects the tests had missed — a plaintext-state leak on
-the failure path, and a vacuously-passing `state-gate` invocation — both fixed and both covered by new
-cases (see follow-ups 7–10 below), which is the argument for reviewing rather than only testing.
-**Still OPEN:** no schedule runs it, the recovery identity has not yet left the host, the backup has
-not been written to the separate disk (blocked on a `root:root` destination and on off-host key
-custody — both human steps), and no test harness for the script is committed.  
+**Status:** RECOVERED byte-exactly. **Partially closed, and the residual is now a different risk than
+the one this finding opened with.** RB-08 covers creating *and* restoring an encrypted backup; the
+create script is a committed artefact with a 23-case suite. **The first off-disk snapshot was written
+on 2026-10-27** (`sdb1`, serial 306, lineage `25425c0f-…`, 119 instances, md5 `b25b8821…`), so
+single-NVMe loss no longer destroys the inventory together with every copy of it — the condition that
+made this incident nearly unrecoverable. The script now *enforces* that separation and refuses a
+same-disk destination. **Still OPEN:** no schedule runs it (the snapshot is manual, and the live state
+has not changed since, so staleness is zero today and unbounded tomorrow); the second identity is
+**still on this host**, so off-*host* loss — fire, theft, whole-machine failure — still takes the state
+and both custodies together; the destination is a session automount that does not exist after a headless
+boot; `sdb` is a 2012-era spinning drive whose SMART health is unverified; and no harness for the script
+runs in CI on a pull request, because `apply.yml` triggers on `push: main` only.  
 **Finding — what happened, attributed to this session.** While testing the S1-012 fix, a shell
 command built a temp directory with `T=$(mktemp -d)` but **never `cd`'d into it**, so every
 following redirection resolved against the repository root. Two statements then acted on the real
@@ -1522,18 +1536,21 @@ narrow: had the phase-0 checksum not been recorded, and had the snapshots not be
 recovery would have been `terraform plan -refresh-only`-style re-import of 119 resources by hand,
 with `make apply` refusing until then. Because state is gitignored, `git` could not have helped.
 
-**Residual risk, OPEN:** the live state and its only backups are on **one physical device**
-(`/dev/nvme0n1p6` for `/opt/jol/backup`, `/dev/nvme0n1p8` for `/opt/jol`). A single NVMe failure
-loses the inventory and every copy together, and no check in this repository can rebuild it —
-`make drift` compares names and visibility, not attributes. This is S2-003's accepted risk (RA-03)
-sharpened by measurement: the risk acceptance says "state is local"; the true statement is "state is
-local, manually backed up to the same device, with no restore ever rehearsed until an agent caused
-one."
+**Residual risk, OPEN:** the live state and the long-standing backup set were on **one physical device**
+(`/dev/nvme0n1p6` for `/opt/jol/backup`, `/dev/nvme0n1p8` for `/opt/jol`); that is now mitigated by the
+`sdb1` snapshot above and by the script's refusal to write anywhere else on `nvme0n1`. What remains:
+no check in this repository can rebuild the inventory — `make drift` compares names and visibility, not
+attributes — and the copies that survive a device failure still live **inside the same machine**, so the
+host-level scenarios are uncovered. This is S2-003's accepted risk (RA-03) re-measured rather than
+closed: the risk acceptance said "state is local"; the true statement was "state is local, manually
+backed up to the same device, with no restore ever rehearsed until an agent caused one", and it is now
+"state is local, backed up on a second disk inside the same host, refreshed by hand".
 **Remediation target measured:** `sdb1` (`/media/jol/32f7e56a-…`, 285 G ext4, 270 G free) is a
-*different physical disk* and closes the single-device scenario; it is currently `root:root 755` and
-needs one `chown`. It does **not** cover fire, theft or whole-host loss, and RB-08 now says so. A
-scheduled refresh, and running RB-08's verification on a cadence rather than only after a loss, are
-still the recommendation.
+*different physical disk* and closes the single-device scenario. It was `root:root 755` until
+2026-10-27, when `chown`/`chmod 700` took effect and the first snapshot was written; it still needs
+`udisksctl mount -b /dev/sdb1` after a headless boot, because nothing in `/etc/fstab` mounts it. It
+does **not** cover fire, theft or whole-host loss, and RB-08 now says so. A scheduled refresh, and
+running RB-08's verification on a cadence rather than only after a loss, are still the recommendation.
 
 **Process rule adopted:** any shell test that redirects into files named like repository artifacts
 must `cd` into its `mktemp -d` directory first and clean up via `trap`, never address repo-relative
@@ -1542,9 +1559,9 @@ paths from an inherited working directory. This session also hit the mirror-imag
 to be read-only that is not.
 
 **Six further defects found while building the follow-up backup procedure, all in commands this
-session wrote, all caught by executing rather than by reading — and then **five more that execution
+session wrote, all caught by executing rather than by reading — and then **ten more that execution
 did not catch**, found by an independent review that read the failure paths the tests never entered,
-or by following the runbook as an operator would:**
+by reviewing my own hardening commit, or by following the runbook as an operator would:**
 
 1. **`/secure/offhost` was invented.** A destination directory was named in a command without ever
    checking it existed. The real separate disk on this host is `sdb1`, mounted at
@@ -1631,6 +1648,47 @@ a committed artefact (`scripts/backup_state.sh`, proven byte-identical to the fe
 (`tests/test_backup_gate.sh`) enforces that identity so the document cannot drift from the code it
 describes, `make backup-state` supplies the arguments, and `apply.yml` runs the suite. A runbook that
 carries code in a fence has two copies of the code and zero guarantees about which one is true.
+
+**Follow-ups 12–16 — defects in the hardening commit itself, found by reviewing it rather than by
+running it.** All five were written by this session; two were claims I had made in prose minutes
+earlier.
+
+12. **The sidecar asserted `off-host-verified: yes` about a key it never located.** The field was set
+    from `RC = 0`, which means *a second identity decrypted this file*. It says nothing about where
+    that identity is stored — and the identity in question is `~/.config/age/state-recovery-20261027.txt`
+    on **the same host as the state**. So every sidecar written so far declared off-host custody while
+    the off-host condition was false. Replaced by three fields that do not conflate the claims:
+    `recovery-key-decrypted` (what was proven), `recovery-key-location : NOT CHECKED` (what was not),
+    and `device-check`. This is the precise shape of an overstated control: the word carrying the risk
+    was the word nobody could test.
+13. **A check was documented as impossible that is available for free.** RB-08's Limitations stated the
+    script "does not verify that `sdb1` is a different physical device (it checks writability only)".
+    `findmnt -no SOURCE --target` then `lsblk -no PKNAME` resolves the disk under any path, with no
+    privileges, and returns `nvme0n1` versus `sdb` here. The script now **refuses** a same-disk
+    destination — which rejects the exact layout this host had before any of this (state on `p8`,
+    backups on `p6`, one die). Where the tools cannot resolve a path, the run warns and records
+    `device-check: unevaluated` rather than passing silently.
+14. **The chosen destination is a desktop-session automount, not a system mount.** `/etc/fstab` holds
+    zero `media` entries; the systemd unit is generated from `/proc/self/mountinfo`; the path embeds
+    the filesystem UUID. After a headless boot, a crash, or any start without GUI login the directory
+    **does not exist** — and the Restore half globbed exactly that path. An empty glob would read as
+    "the off-disk backups are gone" and could send an operator to rebuild 119 resources by hand. Both
+    halves now preflight the mount and distinguish *not mounted* from *nothing there*.
+15. **The device table omitted what kind of disk it is.** `sdb` is a Seagate **ST9320423AS**, 298 G,
+    SATA, `ROTA=1` — a 2012-era spinning laptop drive sharing this machine's supply and backplane. It
+    removes single-NVMe risk and nothing else; SMART health is unverified because `smartctl` needs a
+    password. "A real improvement and a weak end state" is now the wording.
+16. **The CI coverage claim was wrong in its own comment.** `apply.yml` triggers on
+    `push: branches: [main]`, so the Backup Gate Self-Test has **not** run in CI at all: PR #4's checks
+    are Compliance Scan only (3 pass, 1 skip). The step comment said "18 cases" when the suite held 20,
+    then 23 — a count nothing enforced. Corrected, and the caveat is now stated in the comment itself.
+
+**Harness defect found while adding the device cases.** The `lsblk` stub inspected `$1`, which is
+`-no` — so it returned nothing for every device, the device check silently never ran, and the
+same-disk case still exited 1 because the deliberately-fake identity file failed afterwards. **Right
+exit code, no proof at all**, and it would have been committed as coverage. Caught because the
+assertion also requires a verdict line, which came back `no-verdict`; the case now additionally asserts
+that the stubs resolved. Recorded here as the latest instance of traps 11–15.
 
 ---
 

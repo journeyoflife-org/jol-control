@@ -31,6 +31,36 @@ mkdir -p "$W/dest" "$W/bin" "$W/norepo"
 printf '#!/bin/sh\necho 19700101T000000Z\n' > "$W/bin/date"
 chmod +x "$W/bin/date"
 
+# The script resolves the PHYSICAL DISK behind SRC and DEST (findmnt --target, then lsblk PKNAME).
+# The suite's work area and the live state are on the same disk, so without a stub every backup case
+# would be refused for a reason that has nothing to do with what is under test. These pretend the
+# destination is on a second disk; cases 21 and 22 then exercise the refusal and the unresolvable
+# branch explicitly, so the check itself is still tested rather than bypassed.
+cat > "$W/bin/findmnt" <<'STUB'
+#!/bin/sh
+# Called as: findmnt -no SOURCE --target <path>
+# Anything under /opt/jol is the state's real disk; the suite's temp destination is reported as a
+# second disk so the backup cases can run at all. Cases 21-23 exercise the refusal and the
+# unresolvable branch against their own stub directories, so the check is tested, not bypassed.
+for a in "$@"; do case "$a" in /opt/jol/*) echo /dev/nvme0n1p8; exit 0;; esac; done
+echo /dev/sdb1
+STUB
+cat > "$W/bin/lsblk" <<'STUB'
+#!/bin/sh
+# Called as: lsblk -no PKNAME <device>. Scan every argument, not $1: $1 is "-no", and a stub that
+# looked only at $1 returned nothing for every device, which silently disabled the device check and
+# let the same-disk case "pass" on an unrelated error. Take the last argument, which is the device.
+for a in "$@"; do dev="$a"; done
+case "$dev" in
+  /dev/nvme0n1p8) echo nvme0n1 ;;
+  /dev/sdb1)      echo sdb ;;
+esac
+STUB
+chmod +x "$W/bin/findmnt" "$W/bin/lsblk"
+mkdir -p "$W/binsame"
+sed 's/echo sdb/echo nvme0n1/' "$W/bin/lsblk" > "$W/binsame/lsblk"
+cp "$W/bin/findmnt" "$W/bin/date" "$W/binsame/" 2>/dev/null; chmod +x "$W/binsame"/*
+
 # Fixtures built from the shape of a real Terraform 1.16.1 state document.
 REAL_STATE="$REPO/terraform.tfstate"
 SYNTH="$W/state.json"
@@ -42,9 +72,15 @@ jq -n '{terraform_version:"1.16.1",serial:1,lineage:"x",resources:[]}' > "$WIPED
 
 pass=0; fail=0; skip=0
 
-# run <expect-rc> <label> <dest> <max-files-left> [VAR=value ...]
+# run <expect-rc> <label> <dest> <max-files-left> <must-say> [VAR=value ...]
+#
+# `must-say` is not decoration. Every guard case supplies a deliberately invalid RECOVERY_KEY, so ANY
+# later failure also produces the expected exit code 1 — a suite comparing only exit codes reports a
+# pass for the wrong reason. That is precisely how case 7 stayed green after the wiped-state guard was
+# deleted out from under it: the stubbed device check refused, RC=1 matched, and nothing noticed. Each
+# case now asserts the words that identify ITS own refusal.
 run() {
-  local want="$1" label="$2" dest="$3" maxart="$4"; shift 4
+  local want="$1" label="$2" dest="$3" maxart="$4" says="$5"; shift 5
   local rc n leak verdict
   find "$dest" -type f -delete 2>/dev/null
   # `env` because a VAR=value that arrives via expansion is parsed as a COMMAND name, not an
@@ -53,13 +89,31 @@ run() {
   rc=$?
   n=$(find "$dest" -type f 2>/dev/null | wc -l)
   leak=$(find "$dest" -name '*.decoded' -type f 2>/dev/null)
-  verdict=no-verdict
-  grep -qE 'PASS|NOT VERIFIED|FAIL:|OK:|DEST is required' "$W/out" && verdict=ok
-  if [ "$rc" = "$want" ] && [ "$n" -le "$maxart" ] && [ -z "$leak" ] && [ "$verdict" = ok ]; then
+  verdict=said-it
+  grep -qF -- "$says" "$W/out" || verdict=missing-expected-text
+  # Ordering assertion, and the one that actually closes the vacuous pass: every guard case supplies a
+  # deliberately bogus RECOVERY_KEY, so if `age` was reached at all, the guard being tested let the run
+  # continue. Asserting the refusal text is not enough on its own — with the refusal's `exit 1` deleted
+  # the text is still printed, the age error still yields RC=1, and the case still "passes".
+  if grep -qE 'age-keygen: error|^age: error|age: failed' "$W/out"; then
+    verdict="reached the crypto stage - an earlier guard did not stop it"
+  fi
+  # And the sharper version of the same idea: the refusal must come from THIS guard. Delete only the
+  # in-repo refusal's `exit 1` and the next guard stops the run instead - no age error, the expected
+  # text is still printed, RC still 1, and the case would pass while testing a different control. So
+  # every FAIL line in the output has to carry the phrase this case is about.
+  if [ "$verdict" = said-it ]; then
+    local nf nfe; nf=$(grep -c '^FAIL:' "$W/out"); nfe=$(grep '^FAIL:' "$W/out" | grep -cF -- "$says")
+    if [ "$nf" -gt 0 ] && [ "$nf" -ne "$nfe" ]; then
+      verdict="a DIFFERENT guard stopped it ($nf refusals, only $nfe about this one)"
+    fi
+  fi
+  if [ "$rc" = "$want" ] && [ "$n" -le "$maxart" ] && [ -z "$leak" ] && [ "$verdict" = said-it ]; then
     pass=$((pass+1)); printf '  ok    %-46s RC=%-2s files=%s\n' "$label" "$rc" "$n"
   else
-    fail=$((fail+1)); printf '  FAIL  %-46s RC=%s want=%s files=%s max=%s verdict=%s\n' \
-      "$label" "$rc" "$want" "$n" "$maxart" "$verdict"
+    fail=$((fail+1)); printf '  FAIL  %-46s RC=%s want=%s files=%s max=%s leak=[%s] %s\n' \
+      "$label" "$rc" "$want" "$n" "$maxart" "$leak" "$verdict"
+    printf '          needed the words: %s\n' "$says"
     sed -n '1,3p' "$W/out" | sed 's/^/          /'
   fi
 }
@@ -76,16 +130,46 @@ else
   fail=$((fail+1)); printf '  FAIL  %-46s refused but did not say why\n' "1 DEST unset"
   sed -n '1,3p' "$W/o" | sed 's/^/          /'
 fi
-run 1 "2 neither RECOVERY_KEY nor RECOVERY_PUB"   "$W/dest" 0 RECOVERY_KEY="" RECOVERY_PUB=""
-run 1 "3 destination absent"                      "$W/absent" 0 RECOVERY_KEY=x
-run 1 "4 destination inside the repository"       "$W/dest" 0 DEST="." RECOVERY_KEY=x
-run 1 "5 SRC is not JSON"                         "$W/dest" 0 SRC="$REPO/Makefile" RECOVERY_KEY=x
-run 1 "6 SRC is valid JSON but not a state doc"   "$W/dest" 0 SRC="$REPO/tests/fixtures/plan_gate/clean.json" RECOVERY_KEY=x
-run 1 "7 SRC is a WIPED state (resources: [])"    "$W/dest" 0 SRC="$WIPED" RECOVERY_KEY=x
-run 1 "8 SRC is 0 bytes"                          "$W/dest" 0 SRC=/dev/null RECOVERY_KEY=x
+run 1 "2 neither RECOVERY_KEY nor RECOVERY_PUB"   "$W/dest" 0 "set RECOVERY_KEY" RECOVERY_KEY="" RECOVERY_PUB=""
+run 1 "3 destination absent"                      "$W/absent" 0 "DEST absent or not writable" RECOVERY_KEY=x
+run 1 "4 destination inside the repository"       "$W/dest" 0 "DEST is inside the repository" DEST="." RECOVERY_KEY=x
+run 1 "5 SRC is not JSON"                         "$W/dest" 0 "not a populated Terraform state document" SRC="$REPO/Makefile" RECOVERY_KEY=x
+run 1 "6 SRC is valid JSON but not a state doc"   "$W/dest" 0 "not a populated Terraform state document" SRC="$REPO/tests/fixtures/plan_gate/clean.json" RECOVERY_KEY=x
+run 1 "7 SRC is a WIPED state (resources: [])"    "$W/dest" 0 "not a populated Terraform state document" SRC="$WIPED" RECOVERY_KEY=x
+run 1 "8 SRC is 0 bytes"                          "$W/dest" 0 "source missing or 0 bytes" SRC=/dev/null RECOVERY_KEY=x
 # Case 9 exercises the pinned-config fix. With REPO pointed at a tree that has no
 # scripts/state_gate.py the run must refuse to certify (exit 2) and clean up after itself.
-run 2 "9 state-gate unreachable -> not certified" "$W/dest" 0 REPO="$W/norepo" SRC="$SYNTH" RECOVERY_KEY=x
+run 2 "9 state-gate unreachable -> not certified" "$W/dest" 0 "state_gate.py not found" REPO="$W/norepo" SRC="$SYNTH" RECOVERY_KEY=x
+# 21-23: the device check. Refused when both paths resolve to one disk, and warned-about (never
+# silently passed) when the disk cannot be resolved at all. The stub directory that maps sdb1 to
+# nvme0n1 reproduces exactly the layout this host had before RB-08 existed. Numbered past 20 so the
+# crypto block keeps its own labels. These cannot use the generic run() helper, which pins the
+# different-disk stub; the refusal needs its own PATH.
+if PATH="$W/binsame:$W/bin:$PATH" timeout 60 env DEST="$W/dest" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1; then
+  fail=$((fail+1)); printf '  FAIL  %-46s accepted a same-disk destination\n' "21 refusal names the disk"
+elif grep -q 'SAME physical disk' "$W/o"; then
+  pass=$((pass+1)); printf '  ok    %-46s RC=1 and names the disk\n' "21 refusal names the disk"
+else
+  fail=$((fail+1)); printf '  FAIL  %-46s refused, but not for the disk\n' "21 refusal names the disk"
+  sed -n '1,4p' "$W/o" | sed 's/^/          /'
+fi
+if grep -q 'UNVERIFIED' "$W/o"; then
+  fail=$((fail+1)); printf '  FAIL  %-46s the stubs are not resolving, so case 21 is unproven\n' "21 stub integrity"
+else
+  pass=$((pass+1)); printf '  ok    %-46s (stubs resolved)\n' "21 stub integrity"
+fi
+# An empty lsblk answer must produce a WARN plus an "unevaluated" sidecar entry, never a claim of
+# off-device protection. It still exits non-zero here because the fake key fails afterwards, which
+# is fine: the assertion is about the wording, not the code.
+mkdir -p "$W/binvoid"; printf '#!/bin/sh\n' > "$W/binvoid/lsblk"; chmod +x "$W/binvoid/lsblk"
+cp "$W/bin/findmnt" "$W/bin/date" "$W/binvoid/" 2>/dev/null; chmod +x "$W/binvoid"/*
+PATH="$W/binvoid:$W/bin:$PATH" timeout 60 env DEST="$W/dest" RECOVERY_KEY=x "$GATE" </dev/null >"$W/o" 2>&1
+if grep -q 'UNVERIFIED' "$W/o" && grep -q 'could not be resolved' "$W/o"; then
+  pass=$((pass+1)); printf '  ok    %-46s (it refuses to claim it)\n' "23 unresolvable disk is not a pass"
+else
+  fail=$((fail+1)); printf '  FAIL  %-46s\n' "23 unresolvable disk is not a pass"
+  sed -n '1,4p' "$W/o" | sed 's/^/          /'
+fi
 
 # Crypto paths need age, two identities, and a state file the pinned `state-gate` call can judge
 # against this repository's own config. A synthetic 1-resource state would be REFUSED as incomplete,
@@ -101,10 +185,10 @@ if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 && [ 
   RPUB=$(age-keygen -y "$W/recovery.txt" </dev/null 2>&1)
   # The script defaults HOST_KEY to the operator's file; point it at the throwaway instead.
   K="HOST_KEY=$W/host.txt"
-  run 1 "10 recovery identity equals the host's"  "$W/dest" 0 "$K" RECOVERY_KEY="$W/host.txt"
-  run 1 "11 recovery recipient equals the host's" "$W/dest" 0 "$K" RECOVERY_PUB="$HPUB"
-  run 0 "12 distinct identity -> both paths proven" "$W/dest" 2 "$K" RECOVERY_KEY="$W/recovery.txt"
-  run 2 "13 recipient only -> NOT VERIFIED, RC=2"   "$W/dest" 2 "$K" RECOVERY_PUB="$RPUB"
+  run 1 "10 recovery identity equals the host's"  "$W/dest" 0 "recovery recipient equals HOST_KEY" "$K" RECOVERY_KEY="$W/host.txt"
+  run 1 "11 recovery recipient equals the host's" "$W/dest" 0 "recovery recipient equals HOST_KEY" "$K" RECOVERY_PUB="$HPUB"
+  run 0 "12 distinct identity -> both paths proven" "$W/dest" 2 "OK: backup written" "$K" RECOVERY_KEY="$W/recovery.txt"
+  run 2 "13 recipient only -> NOT VERIFIED, RC=2"   "$W/dest" 2 "NOT VERIFIED [recovery-key]" "$K" RECOVERY_PUB="$RPUB"
   # A refused same-second re-run must NOT remove the snapshot that was already there.
   find "$W/dest" -type f -delete 2>/dev/null
   timeout 120 env PATH="$W/bin:$PATH" DEST="$W/dest" HOST_KEY="$W/host.txt" RECOVERY_KEY="$W/recovery.txt" \
@@ -129,11 +213,13 @@ if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1 && [ 
   else
     fail=$((fail+1)); printf '  FAIL  %-46s modes=%s (want 600,600)\n' "15 artefacts are owner-only" "$modes"
   fi
-  if grep -q 'instances : 1' "$W/dest"/*.info 2>/dev/null && grep -q 'off-host-verified: yes' "$W/dest"/*.info 2>/dev/null; then
-    pass=$((pass+1)); printf '  ok    %-46s\n' "16 .info sidecar records serial/instances/custody"
+  if grep -q 'instances : 1' "$W/dest"/*.info 2>/dev/null && grep -q 'recovery-key-decrypted: yes' "$W/dest"/*.info 2>/dev/null \
+     && grep -q 'recovery-key-location : NOT CHECKED' "$W/dest"/*.info 2>/dev/null \
+     && grep -q 'device-check          : verified-different' "$W/dest"/*.info 2>/dev/null; then
+    pass=$((pass+1)); printf '  ok    %-46s\n' "16 sidecar states what was proven AND what was not"
   else
-    fail=$((fail+1)); printf '  FAIL  %-46s\n' "16 .info sidecar records serial/instances/custody"
-    sed -n '1,8p' "$W/dest"/*.info 2>/dev/null | sed 's/^/          /'
+    fail=$((fail+1)); printf '  FAIL  %-46s\n' "16 sidecar states what was proven AND what was not"
+    sed -n '1,10p' "$W/dest"/*.info 2>/dev/null | sed 's/^/          /'
   fi
   # The leak that started this: no plaintext may survive outside the encrypted artefact.
   if [ -n "$(find "$W" -name '*.decoded' -type f 2>/dev/null)" ]; then
@@ -208,13 +294,14 @@ fi
 echo "---"
 echo "backup-gate self-test: $pass passed, $fail failed, $skip skipped"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail backup-gate violation(s)"; exit 1; fi
-if [ "$pass" -lt 12 ]; then
-  # 12 is the measured census of cases that need neither age nor a real state: cases 1-9, 18, 19
-  # and 20. Measured, not assumed - a threshold guessed below the true count turns a broken suite
-  # green, and guessed above it makes every CI run red, which is the S1-012 failure mode again.
+if [ "$pass" -lt 15 ]; then
+  # 15 is the measured census of cases needing neither age nor a real state: 1-9 (guards), 18 (no
+  # artefact in the tree), 19 (fence identity), 20 (umask) and 21-23 (the device check). Measured,
+  # not assumed - a threshold under the true count turns a broken suite green, and a threshold over
+  # it makes every CI run red, which is the S1-012 failure mode again.
   echo "UNEVALUATED — only $pass cases ran; the guard set is incomplete, this is not a pass"; exit 2
 fi
-if [ "$skip" -gt 0 ] && [ "$pass" -lt 12 ]; then
+if [ "$skip" -gt 0 ] && [ "$pass" -lt 15 ]; then
   echo "UNEVALUATED — $skip cases skipped and only $pass ran; not a pass"; exit 2
 fi
 echo "PASSED — $pass backup-gate tests, 0 failures$([ "$skip" -gt 0 ] && echo " ($skip crypto cases skipped)")."
