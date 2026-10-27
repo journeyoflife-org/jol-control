@@ -19,8 +19,35 @@ fi
 
 W="$(mktemp -d)"; chmod 700 "$W"
 trap 'find "$W" -type f -delete 2>/dev/null; rm -rf "$W" 2>/dev/null' EXIT
-mkdir -p "$W/iddir" "$W/chal"
+mkdir -p "$W/iddir" "$W/chal" "$W/bin" "$W/nochal" "$W/samedir"
 umask 077
+
+# The gate now refuses unless the challenge directory resolves to a DIFFERENT physical disk than the
+# identity, because a nonce recovered from the disk you are about to wipe proves nothing about a second
+# copy. Everything under /tmp here is one disk, so the device lookup is stubbed: identity -> nvme0n1,
+# challenge -> sdb. Cases 13 and 14 exercise the refusals against their own stub directories.
+cat > "$W/bin/findmnt" <<'STUB'
+#!/bin/sh
+# -no SOURCE --target <path>. Match on path SHAPE, not on a variable: this heredoc is quoted, so a
+# $W written here would not be expanded at creation time and would be unset when the stub runs -
+# which silently made every path resolve to the same disk and the gate refuse everything.
+# Any path ending in /chal is the second disk; /nochal reports no source at all; else the identity disk.
+for a in "$@"; do case "$a" in
+  *nochal) exit 0 ;;
+  */chal)  echo /dev/sdb1; exit 0 ;;
+esac; done
+echo /dev/nvme0n1p8
+STUB
+cat > "$W/bin/lsblk" <<'STUB'
+#!/bin/sh
+for a in "$@"; do dev="$a"; done
+case "$dev" in
+  /dev/nvme0n1p8) echo nvme0n1 ;;
+  /dev/sdb1)      echo sdb ;;
+esac
+STUB
+chmod +x "$W/bin/findmnt" "$W/bin/lsblk"
+export PATH="$W/bin:$PATH"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %-52s %s\n' "$1" "$2"; }
@@ -109,8 +136,30 @@ else
   ok "12 no challenge or key material in the working tree" ""
 fi
 
+# 13-14: the separation rule. These are the refusals that matter most, because they are the ones that
+# stop the ceremony being satisfied from the disk it is about to make unrecoverable.
+mint
+set +e; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/nochal" </dev/null >"$W/last" 2>&1; rc=$?; set -e
+if [ "$rc" = 1 ] && alive && grep -q 'cannot resolve the physical disk' "$W/last"; then
+  ok "13 unresolvable device -> REFUSE to destroy" "rc=1, identity intact"
+else bad "13 unresolvable device -> REFUSE to destroy" "rc=$rc (destruction must not be offered)"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+mint
+mkdir -p "$W/samedir"
+set +e; timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/samedir" </dev/null >"$W/last" 2>&1; rc=$?; set -e
+if [ "$rc" = 1 ] && alive && grep -q 'SAME disk as the identity' "$W/last"; then
+  ok "14 challenge on the identity's own disk -> refuse" "rc=1, identity intact"
+else bad "14 challenge on the identity's own disk -> refuse" "rc=$rc"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+mint
+timeout 60 env "$GATE" "$W/iddir/k.txt" --challenge-dir "$W/chal" </dev/null >"$W/last" 2>&1
+if grep -q 'separation   : identity on nvme0n1, challenge on sdb' "$W/last"; then
+  ok "15 the separation it relied on is printed, not assumed" ""
+else bad "15 the separation it relied on is printed, not assumed" "not in output"; sed -n '1,3p' "$W/last" | sed 's/^/          /'; fi
+
 echo "---"
 echo "retire-gate self-test: $pass passed, $fail failed"
 if [ "$fail" -gt 0 ]; then echo "FAILED — $fail retire-gate violation(s)"; exit 1; fi
+if [ "$pass" -lt 15 ]; then
+  echo "UNEVALUATED — only $pass of 15 cases ran; not a pass"; exit 2
+fi
 echo "PASSED — $pass retire-gate tests, 0 failures."
 exit 0

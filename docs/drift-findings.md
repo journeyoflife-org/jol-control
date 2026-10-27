@@ -1751,6 +1751,20 @@ snapshot; it does not retroactively protect `20261027T183202Z`. A restore rehear
 `docs/SECRETS_INVENTORY.md` (AGE-2 → destroyed, AGE-3 → pending), `.github/workflows/apply.yml`,
 `AGENTS.md` §3.
 
+**Follow-up 17 — the gate built to prevent this had the same hole, and the failed `cp` is the only
+reason it was not walked into.** The first version proved *"a private key recovered the nonce"* while
+that private key was still on this host and no second copy existed. Minutes later the operator ran
+`cp` of the freshly minted identity to the second disk, and it **failed** — that volume's root is
+`root:root 755`; only `jol-state-backup` is writable — leaving exactly one copy. Running the ceremony
+anyway would have retired the local file, produced a `0` and a message about off-host proof, and
+finished with the key **destroyed and nowhere else**. Proving separation is now required: the challenge
+directory must resolve to a different physical disk than the identity, and an unresolvable device is a
+refusal rather than a warning, because this operation cannot be undone. Cases 13–15 cover it (15 total).
+Two secondary lessons from the same fix: the test stub was written with a **quoted heredoc**, so a
+`$W` inside it never expanded and was unset at run time — the identical class as trap 14's silent
+no-op, arriving from the opposite direction; and a sentence left dangling mid-edit was caught only by
+re-reading the published file.
+
 ---
 
 ## Resolved

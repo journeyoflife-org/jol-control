@@ -42,10 +42,12 @@ backup-state: ## Back up terraform.tfstate off-device per runbooks.md RB-08 (nee
 # because the runbook said "verify first" in prose and the shred was a standalone command line.
 # This target makes the proof a precondition: run it once with no PROOF to get the challenge, decrypt
 # that challenge on the machine holding the other copy, then re-run with PROOF=<the nonce>.
-retire-key: ## Retire an age recovery identity ONLY after proving an off-host copy can open it
-	@test -n "$(KEY)" || { echo "usage: make retire-key KEY=~/.config/age/<identity-file>"; \
-		echo "       then: make retire-key KEY=... CHALLENGE_DIR=/path/off/the/identity/dir"; \
-		echo "       then decrypt the challenge on the OTHER machine and pass PROOF=<nonce>"; exit 1; }
+retire-key: ## Retire an age recovery identity ONLY after proving a copy on another disk opens it
+	@test -n "$(KEY)" || { echo "usage: make retire-key KEY=~/.config/age/<identity-file> CHALLENGE_DIR=<dir on a SECOND disk>"; \
+		echo "       CHALLENGE_DIR must be on another physical disk; /tmp will be refused, because a"; \
+		echo "       nonce recovered from the disk you are about to wipe proves nothing about a copy."; \
+		echo "       then: make retire-key KEY=... CHALLENGE_DIR=... PROOF=<the nonce>"; exit 1; }
+	@test -n "$(CHALLENGE_DIR)" || { echo "usage: make retire-key KEY=$(KEY) CHALLENGE_DIR=<dir on a SECOND disk>"; exit 1; }
 	@test -z "$(PROOF)" || { echo "retiring $(KEY) with proof"; \
 		RETIRE_PROOF='$(PROOF)' bash scripts/retire_recovery_key.sh '$(KEY)' \
 			--challenge-dir '$(or $(CHALLENGE_DIR),.)' --retire; }

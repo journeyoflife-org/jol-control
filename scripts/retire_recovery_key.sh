@@ -39,6 +39,26 @@ case "$(cd "$CDIR" && pwd -P)" in
     echo "      so that proving custody means carrying a file off it, not reading a neighbour."; exit 1;;
 esac
 
+# Proving custody of a COPY requires somewhere else to put the proof. The first version of this gate
+# checked only that the nonce could be recovered, and the local identity was still present while that
+# check ran - so the ceremony could have been satisfied from the same disk, the local copy shredded,
+# and the key destroyed with no second copy anywhere. S2-013 recurring with the gate's approval.
+# For an irreversible operation, an unprovable separation is a REFUSAL, not a warning.
+disk_of(){ local s; s="$(findmnt -no SOURCE --target "$1" 2>/dev/null || true)"; [ -n "$s" ] || { echo ""; return; }
+           lsblk -no PKNAME "$s" 2>/dev/null | head -1; }
+ID_DISK="$(disk_of "$(dirname "$ID")")"; CH_DISK="$(disk_of "$CDIR")"
+if [ -z "$ID_DISK" ] || [ -z "$CH_DISK" ]; then
+  echo "FAIL: cannot resolve the physical disk for the identity ('$ID_DISK') or the challenge dir";
+  echo "      ('$CH_DISK'). Destroying a private key on an unverifiable separation is not offered;";
+  echo "      point --challenge-dir at a directory on the second device (see runbooks.md RB-09)."; exit 1
+fi
+if [ "$ID_DISK" = "$CH_DISK" ]; then
+  echo "FAIL: the challenge dir is on the SAME disk as the identity ($ID_DISK).";
+  echo "      A nonce recovered from the disk you are about to wipe proves nothing about a second";
+  echo "      copy. Put the challenge on another device first - that is the whole test."; exit 1
+fi
+echo "separation   : identity on $ID_DISK, challenge on $CH_DISK"
+
 PUB="$(age-keygen -y "$ID" 2>/dev/null)" || { echo "FAIL: $ID is not a readable age identity"; exit 2; }
 case "$PUB" in age1*) : ;; *) echo "FAIL: unexpected recipient form '$PUB'"; exit 2 ;; esac
 

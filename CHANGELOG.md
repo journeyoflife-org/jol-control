@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on their own (see Fixed below). `make test` runs all six suites. **Caveat, because this claim was wrong
   once already:** `apply.yml` triggers on `push: branches: [main]`, so this suite has not executed in CI
   yet — a pull request shows Compliance Scan only, and first real execution is the merge commit
-- `tests/test_retire_gate.sh` — 12 self-tests for that gate. The property is not "does it delete" but
+- `tests/test_retire_gate.sh` — 15 self-tests for that gate. The property is not "does it delete" but
   "can anything delete an identity **without proof**", so every refusal case also asserts the identity is
   still on disk. Two mutations — a vacuous proof comparison, and removing the proof check entirely —
   each make the suite fail, so the gate is shown to be able to catch its own removal
@@ -294,6 +294,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **The retirement gate built for S2-013 had S2-013's own hole.** It proved only that *a* private key
+  recovered the challenge nonce — while the local copy of that key was still present and no second copy
+  existed. The operator's `cp` of the freshly minted identity to the second disk then failed with
+  `Permission denied` (that volume's root is `root:root 755`), leaving exactly one copy, and the ceremony
+  would still have completed, printed a success about off-host proof, and destroyed the key. The gate now
+  refuses unless the challenge directory resolves to a **different physical disk** than the identity, and
+  treats an unresolvable device as a refusal rather than a warning — for an irreversible operation,
+  unverified is a no. It prints the separation it relied on. Cases 13–15 added (15 total)
+- **Two instructions in RB-08 were actively misleading.** The direct-invocation example told the operator
+  to encrypt to `age18457…`, which is the **destroyed** identity — following it now yields a snapshot with
+  one live key — so it reads the recipient from `~/.config/age/offdisk-recipient.txt` instead. And
+  `CHALLENGE_DIR=/tmp` was suggested in a step whose entire point is that `/tmp` is the wrong disk; a
+  sentence left dangling mid-edit was caught only by re-reading the published file
 - **S2-013 — a recovery identity was destroyed before any off-host copy of it existed**, following
   RB-08's own step 1. No data was lost: the one off-device snapshot opens with AGE-1 (`195,121` bytes,
   md5 `b25b8821…`, matching the live state), and five other age identities plus two session transcripts

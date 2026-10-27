@@ -570,10 +570,12 @@ different block device.
    ```bash
    DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
    export DEST
-   RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj \
-     scripts/backup_state.sh
+   RECOVERY_PUB="$(cat ~/.config/age/offdisk-recipient.txt)" scripts/backup_state.sh
    ls -l "$DEST"; cat "$DEST"/*.info
    ```
+   Read the recipient from the file rather than transcribing it: the recipient first published in this
+   runbook, `age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj`, is the identity that was
+   destroyed (AGE-2), and encrypting to it produces a snapshot with one live key by accident.
    Pass `RECOVERY_KEY=<identity file>` instead of `RECOVERY_PUB` when you hold both identities on the
    host - at creation time, and on any restore rehearsal - to get the full two-`PASS` verification
    and exit 0.
@@ -585,20 +587,39 @@ different block device.
    bytes — so the snapshot became single-custody. Prose that says *verify first* is advice, and advice
    is not a control.
    ```bash
-   make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" CHALLENGE_DIR=/tmp
+   # CHALLENGE_DIR must be on the SECOND disk. /tmp is wrong: it shares the disk the identity lives on,
+   # and a nonce recovered from that disk proves nothing about a second copy. The gate refuses both
+   # cases - same disk, and device unresolvable - because this deletes something unrecoverable.
+   make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
+                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup
    ```
-   Phase 1 writes a challenge encrypted to that recipient and prints a nonce it stores **only as a
-   hash**, so no local file can hand you the answer; nothing is destroyed. Carry the challenge to the
-   machine holding the other copy, decrypt it there, then re-run with `PROOF=<nonce>`. The refusal
-   paths leave the identity in place, a stale nonce cannot retire a new identity, and the challenge
-   cannot be written beside the identity it tests. `tests/test_retire_gate.sh` covers all twelve of
-   those properties, and the two mutations that would break them each make the suite fail.
+   Phase 1 writes a challenge encrypted to that recipient, prints the nonce, and stores the expected
+   answer **only as a hash**, so no local file can hand you the answer; nothing is destroyed. It also
+   prints the separation it relied on (`identity on nvme0n1, challenge on sdb`) — read that line, it is
+   the whole basis of the proof. Then carry the challenge to wherever the other copy lives, decrypt it
+   there, and substitute the **actual value** for `<that-nonce>` — pasting the angle-bracket placeholder
+   literally produced `bash: syntax error near unexpected token 'newline'` in a real run:
+   ```bash
+   make retire-key KEY="$HOME/.config/age/state-recovery-<date>.txt" \
+                   CHALLENGE_DIR=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
+                   PROOF=<the nonce printed on the other machine>
+   ```
+   `tests/test_retire_gate.sh` holds 15 cases: the proof is required, refusals leave the identity in
+   place, the nonce is not recoverable from anything on this host, a stale nonce cannot retire a new
+   identity, and the two separation refusals below. Two mutations — a vacuous proof comparison, and
+   removing the proof check — each make the suite fail.
 
-**Note on what this gate deliberately makes impossible.** Because `backup_state.sh` requires a
-recovery recipient that differs from the host key, and `retire_recovery_key.sh` will not let the last
-copy leave without off-host proof, there is no sequence that ends with a backup and zero second
-custody - the moment the only copy is gone, backups stop being accepted rather than silently
-degrading to one key. That refusal is the control; re-mint per step 1 and carry it off-host to resume.
+**A first version of that gate had a hole worth naming, because it is the same hole as S2-013.** It
+proved *"a private key recovered the nonce"* while that private key was still sitting on this host and
+no second copy existed — so the ceremony could complete, the local file be shredded, and the key be
+destroyed outright. That is what nearly happened on 2026-10-27 in the literal sense: the `cp` of the
+fresh identity to the second disk failed with `Permission denied` (that volume's root is `root:root
+755`, only `jol-state-backup` is writable), leaving exactly one copy — and the retirement would have
+"passed" anyway. The gate therefore refuses unless the challenge directory resolves to a **different
+physical disk** than the identity, and refuses outright when that cannot be determined: for an
+irreversible action an unverifiable separation is a no, not a warning. It prints the separation it used,
+because a claim nobody can see is a claim nobody can check. Proving a copy exists *off the machine*
+remains beyond it — only restoring from that copy elsewhere demonstrates it, which is RB-09 step 5.
 
 **Expected output:** `written … (≈195 KB)` with mode 600, a `recipients:` line, `PASS [host-key]`, then
 either `PASS [recovery-key]` or `NOT VERIFIED [recovery-key]`, then the pinned `state-gate` report

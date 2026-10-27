@@ -112,10 +112,12 @@ jobs:
         run: bash tests/test_backup_gate.sh
 
       - name: Retire Gate Self-Test (prove custody must be shown before destruction)
-        # 12 cases over scripts/retire_recovery_key.sh. The property is not "does it delete" but
+        # 15 cases over scripts/retire_recovery_key.sh. The property is not "does it delete" but
         # "can anything delete an identity WITHOUT proof", so every refusal case also asserts the
-        # identity is still on disk - a gate that destroys on failure is worse than no gate. Two
-        # mutations (vacuous proof comparison, proof check removed) each make the suite fail.
+        # identity is still on disk - a gate that destroys on failure is worse than no gate. It also
+        # refuses when the challenge directory resolves to the identity's own disk, which is the hole
+        # the first version had: the ceremony could complete from the disk it was about to make
+        # unrecoverable. Two mutations (vacuous proof comparison, check removed) each fail the suite.
         # Needs age + age-keygen. When those are absent the suite reports UNEVALUATED by exiting 2,
         # and this step says so in a notice rather than absorbing the 2 with `|| [ $? = 2 ]` - that
         # form would let a step whose tests never ran conclude success, which is the false green
@@ -124,7 +126,7 @@ jobs:
           if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
             bash tests/test_retire_gate.sh
           else
-            echo "::notice title=Retire gate UNEVALUATED::age is not installed on this runner, so the 12 retirement cases did not execute. Absence of a failure here is not a pass."
+            echo "::notice title=Retire gate UNEVALUATED::age is not installed on this runner, so the 15 retirement cases did not execute. Absence of a failure here is not a pass."
             echo "Retire gate: **UNEVALUATED on this runner** (no age) - not a pass." >> "$GITHUB_STEP_SUMMARY"
           fi
 
