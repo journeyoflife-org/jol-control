@@ -404,6 +404,49 @@ them, and neither changed the enforcement state of anything.
    on every single run. Any gate that must distinguish pass / refuse / cannot-check has to read
    `${PIPESTATUS[0]}` or run the command without a pipe. A green exit code from a pipeline is
    evidence about `tail`, not about the scanner.
+10. **A failed producer behind a pipe does not merely corrupt the exit code — it manufactures a
+    plausible value.** `age --decrypt -i key missing.age | md5sum` printed
+    `d41d8cd98f00b204e9800998ecf8427e` and exited **0**. That is the MD5 of *empty input*: a
+    well-formed-looking 32-hex-digit digest that means "nothing was read". The command was a
+    verification step for a backup, so a broken backup would have been reported as a verified one.
+    `printf '' | md5sum` reproduces the value. Any checksum comparison must capture to a file, test
+    the producer's status, and reject the empty-input digest explicitly — which is what RB-08 now
+    does. Trap 9 above is the exit-code form of this; this one is worse, because the output looks
+    like a measurement.
+11. **A test that extracts "the first code block after the heading" tests the wrong block, and a
+    vacuous test reports success.** Verifying the script *as published in* `docs/runbooks.md` by
+    slicing out the first ```` ```bash ```` fence after `### Creating a backup` grabbed the key-
+    **minting** snippet instead of the verifier. The extracted script ran, every assertion "passed",
+    and the negative test — labelled *must refuse* — exited **0** because an empty script has nothing
+    to refuse. Selecting by **content** (`EXPECT_MD5` + `verify recovery-key`) found 1 block out of
+    18 and only then was the artefact actually tested. Never confirm an extractor by its exit code;
+    confirm it by the size of what it extracted.
+12. **Running a runbook verbatim is not a read-only act.** That same vacuous "test" executed
+    `age-keygen -o ~/.config/age/state-recovery-YYYYMMDD.txt` with the placeholder name unresolved
+    and **generated a real private key on disk**. It was unreferenced (the only match for its
+    recipient was the file itself), so it was shredded after that check. `age-keygen` refused to
+    overwrite an existing identity, which is why the two legitimate keys survived untouched. Any
+    snippet that mints, writes or deletes must be run in a scratch directory, or not run at all.
+13. **A broken test harness reports itself as a broken product.** Building the verification for the
+    RB-08 backup script produced five false signals in a row, each of which invited a fix to the wrong
+    layer:
+    - `run(){ DEST="$W/dest" "$@" bash script; }` invoked as `run RECOVERY_KEY="$RK"` returned
+      **`RC=127`** for five cases. Prefix assignments are only recognised when they appear **literally
+      in the source**; after expansion bash treats `RECOVERY_KEY=/path` as the *command name* and
+      reports command-not-found. Nothing was wrong with the script. Use `env VAR=value cmd`.
+    - `age --decrypt -i key "$F"` with `$F` **empty** does not error — `age` falls back to reading
+      standard input, so a backgrounded test **stays in state `T` (stopped)** after `SIGTTIN` rather
+      than failing. It looked like a slow encryption. Always pass `< /dev/null`, and bound the call
+      with `timeout`; redirecting only stdout is not protection.
+    - `pkill -9 -f 'timeout 5 age'` matched the **command line of the shell issuing it** (which
+      contains that literal string) and killed the session — exit **137**, no output. Never `pkill -f`
+      with a pattern that appears in your own command; collect PIDs and kill by PID.
+    - `ls -1 "$W/dest"/*.age` returning nothing fed an empty argument into the next step, which is
+      how the hang above was reached. A "test" whose input is empty is not a test.
+    - Two `RC=0` expectations were only satisfiable because a *previous* case had left a file behind.
+      Assertions must be independent of execution order.
+    The general form: when a check fails **immediately and uniformly**, suspect the harness before the
+    artifact, and prove the harness by feeding it an input whose correct answer you already know.
 
 ### S1-005: .github's ruleset requires a code-owner review that a single-member organization cannot give
 
@@ -1402,8 +1445,14 @@ in the same pass; S1-009 was the only omission.
 ### S2-012: an agent destroyed the live `terraform.tfstate`; recovery depended on a backup no runbook named
 
 **Discovered:** 2026-10-27  
-**Status:** RECOVERED byte-exactly. **The underlying gap is OPEN** — the backup set is manual,
-stale, same-device, and documented in no runbook (RB-08 was written by this incident).  
+**Status:** RECOVERED byte-exactly. **Partially closed:** `docs/runbooks.md` RB-08 now covers
+creating *and* restoring an encrypted backup, with a verification script tested across 17 cases. An
+independent review of that script found two defects the tests had missed — a plaintext-state leak on
+the failure path, and a vacuously-passing `state-gate` invocation — both fixed and both covered by new
+cases (see follow-ups 7–10 below), which is the argument for reviewing rather than only testing.
+**Still OPEN:** no schedule runs it, the recovery identity has not yet left the host, the backup has
+not been written to the separate disk (blocked on a `root:root` destination and on off-host key
+custody — both human steps), and no test harness for the script is committed.  
 **Finding — what happened, attributed to this session.** While testing the S1-012 fix, a shell
 command built a temp directory with `T=$(mktemp -d)` but **never `cd`'d into it**, so every
 following redirection resolved against the repository root. Two statements then acted on the real
@@ -1459,8 +1508,12 @@ loses the inventory and every copy together, and no check in this repository can
 `make drift` compares names and visibility, not attributes. This is S2-003's accepted risk (RA-03)
 sharpened by measurement: the risk acceptance says "state is local"; the true statement is "state is
 local, manually backed up to the same device, with no restore ever rehearsed until an agent caused
-one." Recommend an off-device copy plus a scheduled refresh, and that RB-08's verification step be
-run on a cadence rather than only after a loss.
+one."
+**Remediation target measured:** `sdb1` (`/media/jol/32f7e56a-…`, 285 G ext4, 270 G free) is a
+*different physical disk* and closes the single-device scenario; it is currently `root:root 755` and
+needs one `chown`. It does **not** cover fire, theft or whole-host loss, and RB-08 now says so. A
+scheduled refresh, and running RB-08's verification on a cadence rather than only after a loss, are
+still the recommendation.
 
 **Process rule adopted:** any shell test that redirects into files named like repository artifacts
 must `cd` into its `mktemp -d` directory first and clean up via `trap`, never address repo-relative
@@ -1468,8 +1521,82 @@ paths from an inherited working directory. This session also hit the mirror-imag
 (`terraform fmt -diff` mutating a tracked file, S2-008); both are the same class — a command believed
 to be read-only that is not.
 
-**Files affected:** `Makefile` (warning corrected), `docs/runbooks.md` (RB-08 added),
-`docs/drift-findings.md`; `terraform.tfstate` restored byte-exact, no net change
+**Six further defects found while building the follow-up backup procedure, all in commands this
+session wrote, all caught by executing rather than by reading — and then **four more that execution
+did not catch**, found only when an independent review read the failure paths the tests never entered:**
+
+1. **`/secure/offhost` was invented.** A destination directory was named in a command without ever
+   checking it existed. The real separate disk on this host is `sdb1`, mounted at
+   `/media/jol/32f7e56a-…` with 270 G free.
+2. **A recovery key was told to live in `/tmp`.** The claim made alongside it — "`/tmp` is wiped on
+   reboot" — was **also wrong**: `/tmp` here is on-disk (`/dev/nvme0n1p3`) with policy
+   `D /tmp 1777 root root 30d`, so it survives a reboot and is reaped after 30 days. The conclusion
+   (move it) was right for the wrong reason, which is the worst kind of guidance. The identity was
+   relocated to `~/.config/age/state-recovery-20261027.txt` (mode 600), verified byte-identical by
+   `sha256sum` **before** the `/tmp` copy was shredded.
+3. **The first version of the backup script reported success for a backup with one custody path.**
+   Passing the host identity as the "recovery" identity still printed *"decryptable by both keys"*
+   — a green assurance of redundancy that protected nothing. Found by negative-testing the script
+   with deliberately wrong inputs, not by reading it. It now compares the two public keys and
+   refuses. An earlier draft also called `age --list-recipients`, which does not exist in age 1.1.1:
+   it encrypted successfully, then died **before** verifying.
+4. **The script was unusable for the scenario it existed to serve.** It required `RECOVERY_KEY`, an
+   identity *file*, to run its second verification — so the moment an operator followed the runbook's
+   own step 1 and moved that key off the host, the script could no longer run at all. It now accepts
+   either `RECOVERY_KEY` (full proof) or `RECOVERY_PUB` (recipient recorded, off-host path printed as
+   **`NOT VERIFIED`**, never as a pass). All eight input permutations are tested, including both being
+   empty and the supplied public key equalling the host's.
+5. **Two backups landing in the same UTC second silently destroyed the earlier one.** The output name
+   is `date -u +%Y%m%dT%H%M%SZ` — one-second granularity — and `age` overwrites an existing output
+   without warning. Found by running the script twice under a stubbed `date`, where the second call
+   *should* have produced two files and produced one. The script now refuses to overwrite, and the
+   refused re-run was confirmed to leave the original byte-identical.
+6. **A garbage source produced a well-formed backup before anything complained.** With `SRC` pointed at
+   an unrelated file the script encrypted and wrote a 5 KB `.age` to the destination, and only the
+   *final* `state-gate` check noticed — leaving an artefact on the backup disk that reads exactly like
+   a snapshot. Found by testing the failure paths, which is the only way failure paths get found. The
+   source is now validated with `jq` **before** any write, and the three bad-source cases (`Makefile`,
+   a valid-JSON plan fixture, a 0-byte file) were confirmed to refuse with **zero artefacts left
+   behind**.
+7. **The verification step wrote PLAINTEXT Terraform state, other-readable, and left it there on every
+   failure path.** `DEC="$OUT.decoded"` was created by a shell redirect at the ambient umask — `0002`
+   on this host, so mode `664` — and `rm -f "$DEC"` was the *next statement* after a call that can
+   fail, so under `set -e` it never ran. The per-function `trap 'rm -f "$t"' RETURN` did not help:
+   `RETURN` does not fire when the function calls `exit`, and does not fire when `set -e` aborts
+   mid-function. Net effect: the full inventory of 40 repositories, in plaintext credentials, beside the
+   ciphertext, on the backup disk — produced by the script this register previously described as
+   "fail-closed". That description was itself the overstatement: **the label came from me, the leak
+   came from the code, and only the review caught it.** Fixed by `umask 077`, one `EXIT` trap covering
+   every temp, and removal of the artefact unless the run fully succeeded.
+8. **`state-gate` was invoked without pinning the directory it compares against.** It takes `dir`
+   positionally with default `.`, so `--state <backup>` alone judged a valid inventory against
+   whatever directory the operator stood in. Measured from a scratch dir it answered **`SAFE` over zero
+   resource blocks** — a *vacuous pass*, which is worse than the honest `UNEVALUATED` I had assumed it
+   would return. The `REPO` path is now pinned explicitly and derived from neither `SRC` nor `CWD`.
+9. **Fixing defect 7 introduced a worse one, caught only by a case written to assert preservation.**
+   The new cleanup trap removed the artefact on *any* non-success, so a same-second re-run — which
+   correctly refuses to overwrite — then **deleted the original backup**. `[ -n "$OUT" ]` was true for
+   a file this run had not created. Hence the `CREATED` flag, and a test that compares the original's
+   sha256 and the destination's file count across the refused re-run. A fix is not verified by the case
+   that motivated it; it is verified by the case that attacks it.
+10. **The Create and Restore halves of the same runbook did not agree.** Create wrote
+    `jol-control-tfstate-<stamp>.age` into `sdb1`; Restore enumerated
+    `/opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age`. Neither the directory nor the
+    basename matched, so a backup made by the new procedure was **invisible to the recovery procedure
+    written on the same day**. Fixed by adopting the existing basename convention, enumerating both
+    locations, and writing an `.info` sidecar with `serial`/`lineage`/`instances`/`md5` — which also
+    supplies the "checksum of the state you expect" that Restore's own prerequisite demands and that
+    previously existed only on a terminal scrollback.
+
+A pasted three-line `sudo` block also ran only its first line: the directory was created but stayed
+`root:root 755` and unwritable, which `stat` caught and the transcript did not. Every effect of a
+multi-line privileged command must be verified independently.
+
+**Files affected:** `Makefile` (warning corrected), `docs/runbooks.md` (RB-08: restore procedure, then
+expanded to cover creating a backup, including a verifier whose plaintext-leak and vacuous-pass paths
+were found only under independent review), `docs/drift-findings.md`, `docs/SECRETS_INVENTORY.md` (new
+row **AGE-2** plus the 1-of-2 recipient semantics); `terraform.tfstate` restored byte-exact, no net
+change
 
 ---
 

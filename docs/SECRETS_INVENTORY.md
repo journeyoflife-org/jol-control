@@ -18,6 +18,14 @@ Columns: `secret_id | vault_path (pass) | tier | type | entity | storage_locatio
 | GH-def | (n/a — injected) | T2 | Actions default `GITHUB_TOKEN` | journeyoflife-org | ephemeral per workflow run | never | auto (per-run) | 2026-10-20 | repo-scoped per `permissions:` block | CC6.1 | expires with the run |
 | B1b-ref | (gh-managed, not in pass) | T1 | gh OAuth token, account `JourneyOfLife` (interactive apply path) | all-three (shared human credential) | `gh` keyring, active account | 2099-12-31 | manual | 2026-10-20 | org admin on all three controllers | A.8.2 / CC6.2 | revoke via account settings |
 | AGE-1 | (raw file, not pass) | T0 | age X25519 identity `~/.config/age/state-backup-key.txt` | all-three | host filesystem, mode 0600 | never | on-compromise | 2026-10-17 | jol state archives + vault | A.8.24 / A.5.30 | sealed 2-of-2 envelopes (pending) |
+| AGE-2 | (raw file, not pass) | T0 | age X25519 identity `~/.config/age/state-recovery-20261027.txt` — second recipient for `terraform.tfstate` backups (runbooks.md RB-08) | journeyoflife-org | host filesystem, mode 0600 — **the point of the row is that it is still here**: it has not been moved off-host, so it currently provides a second *key*, not a second *location* | never | on-compromise | 2026-10-27 | opens the off-device state backups independently | A.8.24 / A.5.30 | recipient `age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj`. Losing it does **not** make a backup unreadable (AGE-1 still opens it); it makes the off-host custody path unverifiable. Rotate by re-encrypting to a fresh recipient, not by editing this row |
+
+**Recipient semantics, stated so the two rows are not misread.** RB-08 encrypts to AGE-1 **and** AGE-2
+as two `age` *recipients*. That is **1-of-2**: either private key alone decrypts the file. It is not
+threshold secrecy, and it is not the "sealed 2-of-2 envelopes" recorded in AGE-1's `recovery_path`,
+which refers to a *custody* procedure that is still pending. Two recipients exist so that the loss of
+one machine does not destroy both the inventory and its only key — not so that two parties must
+collude to read it. Claiming the latter would be an overstated control.
 
 `expires` semantics: ISO date = hard deadline (`check_secret_inventory.sh` fails CI
 within 14 days); `2099-12-31` = no server-side expiry placeholder, enforce by rotation

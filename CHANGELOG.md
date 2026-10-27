@@ -23,6 +23,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Measurement trap 9 in `docs/drift-findings.md`: `$?` after a pipeline reports the **last** stage,
   which made `gitleaks detect … | tail -30; echo "RC=$?"` print `RC=0` beside `leaks found: 10`, and
   would have made the new CI secret scan fail on every run had it not been caught by executing it
+- Measurement trap 10 in `docs/drift-findings.md` — the more dangerous sibling of trap 9. A failed
+  producer behind a pipe does not only corrupt the exit code, it **manufactures a plausible value**:
+  `age --decrypt -i key missing.age | md5sum` printed the MD5 of *empty input* and exited **0**, so a
+  broken backup is indistinguishable from a verified one. Trap 9 is wrong about a status; this one is
+  wrong about a measurement that looks like a measurement
+- `docs/SECRETS_INVENTORY.md` row **AGE-2** for the recovery identity RB-08 now depends on, added
+  because the register's own Rule 2 makes an unregistered credential a review failure — and this change
+  created one. The row records the uncomfortable truth rather than dressing it up: the key is **still on
+  the host**, so it supplies a second *key* and not yet a second *location*. With a semantics note,
+  because two `age` recipients is **1-of-2** (either private key alone decrypts) and must not be read as
+  threshold secrecy or as AGE-1's pending "sealed 2-of-2 envelopes", which is a custody procedure
+- `docs/runbooks.md` RB-08 writes an `.info` sidecar per backup (`serial`, `lineage`, `resources`,
+  `instances`, `md5`, `recipients`, `off-host-verified`), and the Restore half now enumerates **both**
+  locations and reads the sidecar before decrypting. Previously the two halves of the same runbook did
+  not agree: Create wrote `jol-control-tfstate-<stamp>.age` while Restore globbed
+  `/opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age`, so a backup made by the new procedure
+  was invisible to the recovery procedure written the same day. The sidecar also finally supplies the
+  "checksum of the state you expect" that Restore's own prerequisite demands and that previously existed
+  only on a terminal scrollback
 - `scripts/state_gate.py` — STOP gate that refuses `terraform apply` when the state in
   front of the config cannot account for what the config would create: 0-byte state file
   (Terraform writes state atomically and never produces one on its own), state that
@@ -149,10 +168,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Makefile`: the `apply` warning claimed *"this host holds the only copy of terraform.tfstate"*.
   Three `age`-encrypted snapshots exist at `/opt/jol/backup/tfstate/`. The warning now states the
   true risk — no **off-host** copy, backups are manual and share the device — and points at RB-08
-- `docs/runbooks.md` RB-08 — "Restore `terraform.tfstate` from the encrypted backup set", written
-  **after** executing and verifying it, not from memory: stop-first, preserve-and-checksum,
-  enumerate, decrypt to metadata only (never print state contents), accept only an exact
-  `serial`/`lineage`/instance/md5 match, then confirm via `terraform state list` and `state-gate`
+- `docs/runbooks.md` RB-08 retitled to **"Back up and restore `terraform.tfstate`"** and given the
+  create-side half it lacked. It now carries a two-recipient `age` command and a verifier that
+  round-trips the ciphertext with **both** identities, rejects the md5 of empty input, and refuses
+  when the two recipients resolve to the same key; plus the measured device layout — live state on
+  `nvme0n1p8` and the existing backups on `nvme0n1p6` are **one physical disk**, while `sdb1` is not —
+  and a plain statement that `sdb1` closes single-device loss only, not fire, theft or whole-host
+  loss. The restore half was written **after** executing and verifying it, not from memory:
+  stop-first, preserve-and-checksum, enumerate, decrypt to metadata only (never print state
+  contents), accept only an exact `serial`/`lineage`/instance/md5 match, then confirm via
+  `terraform state list` and `state-gate`
 - `.github/workflows/compliance-scan.yml`: the `security-scan` job lost its decorative
   `matrix.tier` — no step ever referenced it, and `actions/checkout` with no `repository:` checks
   out this repository only, so run 40072669078 ran four identical jobs against one tree. The step
@@ -231,6 +256,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently by `terraform state list | wc -l` → 119 and `make state-gate` → `SAFE` exit 0.
   Recorded in full, including cause, because the recovery succeeding is not the finding: no runbook
   named the backup set and no automation refreshed it
+- **S2-012 follow-ups — three further defects, all in commands this session wrote, all caught by
+  executing them rather than reading them.** (1) RB-08's backup verifier reported success for a
+  backup with **one custody path**: passing the on-host identity as the "recovery" identity still
+  printed *"decryptable by both keys"*, a green assurance of redundancy that would survive nothing
+  the host does not already survive — the two public keys are now compared and equal ones refused
+  (exit 1). (2) An earlier draft called `age --list-recipients`, which **does not exist in `age`
+  1.1.1**: it encrypted successfully, then died *before* verifying. (3) A destination named
+  `/secure/offhost` never existed and was written into a command without being checked; the real
+  second disk is `sdb1` at `/media/jol/32f7e56a-…` with 270 G free. Separately, the recovery
+  identity had been minted into `/tmp` on the strength of a **false** justification ("wiped on
+  reboot") — measured here as on-disk (`/dev/nvme0n1p3`) with policy `D /tmp 1777 root root 30d`, so
+  it survives a reboot and reaps the key after 30 days: right conclusion, wrong reason, the worst
+  kind of guidance. It now sits at `~/.config/age/state-recovery-20261027.txt` (mode 600), verified
+  byte-identical by `sha256sum` **before** the `/tmp` copy was shredded. A pasted three-line `sudo`
+  block also executed only its first line, leaving the destination `root:root 755` and unwritable
+  while appearing to have succeeded
+- **S2-012 follow-ups 4–6 — defects in the backup script found only by running it.** (4) It
+  required `RECOVERY_KEY`, an identity **file**, for its second verification, so following the
+  runbook's own step 1 — moving that key off the host — made the script unrunnable for the exact
+  scenario it exists for. It now accepts either `RECOVERY_KEY` (full proof) or `RECOVERY_PUB`
+  (recipient recorded, off-host path reported as **`NOT VERIFIED`**, never as a pass). (5) The output
+  name uses a **one-second** timestamp and `age` overwrites an existing file without comment, so two
+  backups in the same second silently destroyed the earlier snapshot; found by running the script
+  twice under a stubbed `date`. It now refuses to overwrite, and the refused re-run was confirmed to
+  leave the original byte-identical. (6) A **garbage `SRC`** still produced a well-formed 5 KB `.age`
+  on the backup disk before the final check complained; the source is now validated with
+  `jq` **before** any write. Seventeen cases now pass against the script as published in
+  `docs/runbooks.md`, each asserting exit code, verdict line, the number of artefacts left in the
+  destination **and** whether any plaintext survived — the last two of which are what the earlier
+  fourteen failed to notice. No harness for it is committed; see Fixed below
+- **RB-08's backup script leaked PLAINTEXT Terraform state and passed vacuously in two places — found
+  by an independent review, not by the 14 cases that preceded it.** (1) The verification step wrote
+  `$OUT.decoded` at the ambient umask (`0002` on this host → mode `664`, other-readable) and left it
+  behind on every failure path, because `rm -f "$DEC"` sat after a call that can fail under `set -e`
+  and because `trap … RETURN` does not fire when a function calls `exit` or when `set -e` aborts
+  mid-function. That is the credential inventory of 40 repositories in plaintext next to the ciphertext,
+  produced by a script this changelog had just called "fail-closed". Fixed with `umask 077`, a single
+  `EXIT` trap over every temp, and removal of the artefact unless the run fully succeeded. (2)
+  `state_gate.py` was invoked without pinning its config directory, so from a foreign CWD it judged a
+  valid inventory against no configuration at all and answered **`SAFE` over zero resource blocks** — a
+  false pass, worse than the honest refusal assumed. `REPO` is now pinned, derived from neither `SRC`
+  nor `CWD`. (3) A wiped state (`resources: []`) passed the pre-write check and was encrypted as a good
+  backup; the guard now also requires a string `terraform_version`, a string `lineage`, a numeric
+  `serial` and at least one resource — that exact shape being what this host produced when its
+  inventory was destroyed. (4) `NOT VERIFIED` exited **0**; it now exits **2**, per the repository's
+  0-safe / 1-refused / 2-cannot-check convention, so a scheduler cannot read an unproven control as
+  green. (5) Refusing a same-second collision then **deleted the original backup** — the cleanup added
+  to fix (1) removed `$OUT` on any failure whether or not this run created it. A `CREATED` flag gates
+  it, and a case now asserts the original's sha256 and the destination's file count are unchanged across
+  a refused re-run: a fix is verified by the case that attacks it, not the case that motivated it
+- The Create-half artefact name now follows the existing `jol-control-terraform.tfstate.<stamp>.age`
+  convention, and `DEST` is refused when it resolves inside the repository — `*.age` and `*.age.decoded`
+  are **not** gitignored here, so a `DEST=.` run would have left an untracked, other-readable plaintext
+  state one `git add -A` away from a commit AGENTS.md forbids
+- `docs/runbooks.md` RB-08's device table contradicted itself and its own neighbouring files: the row
+  for the separate disk was annotated "all three rows are `nvme0n1`", and `sdb1` was listed as "285 G
+  free" when 285 G is its **size** and 270 G is free. Both corrected; the column is now "Same physical
+  disk as the state?" with the reference row marked as such
+- Two claims that outran their evidence were narrowed to what is actually checked: the script verifies
+  that the two recipient **strings** differ (not "cryptographic independence", and not the *location*
+  of either key), and the PASS line now says a distinct identity opens the file rather than implying the
+  off-host scenario is covered while the identity is still in `~/.config/age/`
+- Measurement trap 13 recorded: **a broken test harness reports itself as a broken product.** Building
+  the RB-08 verification produced five false signals that each invited a fix to the wrong layer —
+  `RC=127` because an expanded `VAR=value` is parsed as a *command name*, not an assignment (use
+  `env`); `age` falling back to **stdin** when handed an empty filename, so the test sat in process
+  state `T` after `SIGTTIN` instead of failing; `pkill -f` matching the command line of the shell
+  issuing it and killing the session with **137**; a glob that returned nothing feeding an empty
+  argument onward; and two assertions satisfiable only because a previous case left a file behind
 - **S1-012** `.github/workflows/plan.yml`: see Changed above — the `Validate & Plan` job's
   `Destroy / Replace Gate` could never pass in CI. Confirmed pre-existing, not a regression from
   this branch: the same step failed on run `39479272770` (`bc05f3d`, 2026-10-20) with identical log

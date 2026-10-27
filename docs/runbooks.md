@@ -338,12 +338,264 @@ path by which losing this credential produces a green drift verdict.
 
 ---
 
-## RB-08: Restore `terraform.tfstate` from the encrypted backup set
+## RB-08: Back up and restore `terraform.tfstate`
 
 **Written 2026-10-27 after this procedure was executed and verified.** An agent destroyed the live
 state file during a test (see `docs/drift-findings.md` S2-012); the restore below is the path that
 recovered it byte-exactly. It is recorded because the backup set existed, worked, and was named in
 no runbook — recovery depended on searching the filesystem for it.
+
+### What this protects against, and what it does not
+
+Measured on this host, 2026-10-27:
+
+| Path | Block device | Same physical disk as the state? |
+|---|---|---|
+| `/opt/jol/repos/jol-control/terraform.tfstate` | `nvme0n1p8` | — (this is the reference) |
+| `/opt/jol/backup/tfstate/*.age` | `nvme0n1p6` | **yes** — one NVMe holds the inventory and every copy of it |
+| `/media/jol/32f7e56a-…` (`sdb1`, 285 G total, **270 G free**) | `sdb1` | **no — a different disk** |
+
+So `sdb1` closes the measured gap (one NVMe currently holds the inventory and every copy of it).
+It does **not** cover fire, theft or total host loss — that needs a destination outside the machine,
+and the documented offsite tier elsewhere in this estate is a second object-storage bucket at
+another provider, not a second disk in the same box.
+
+### Creating a backup
+
+**Prerequisites:** `age` 1.1.1, `jq` 1.7 (`/usr/bin/jq`) and `python3` with the repo's
+`scripts/state_gate.py`; the on-host identity `~/.config/age/state-backup-key.txt` (row
+**AGE-1** in `docs/SECRETS_INVENTORY.md`); a **second** identity held off-host; a destination on a
+different block device.
+
+1. Mint the recovery identity **outside** any auto-cleaned directory. `/tmp` is on-disk here
+   (`D /tmp 1777 root root 30d`), so it survives a reboot but is reaped after 30 days — never put
+   long-lived key material in it.
+
+   > **This step has side effects and is the only step here that creates a secret.** Replace
+   > `YYYYMMDD` with the real date *before* running it: pasted verbatim, `age-keygen -o ~/.config/age/
+   > state-recovery-YYYYMMDD.txt` generates a live private key under the literal placeholder name.
+   > That happened on 2026-10-27 while testing this runbook; the key was unreferenced and was shredded.
+   > `age-keygen` will not overwrite an existing identity, so an established key cannot be clobbered
+   > this way.
+   ```bash
+   umask 077
+   age-keygen -o ~/.config/age/state-recovery-YYYYMMDD.txt
+   age-keygen -y ~/.config/age/state-recovery-YYYYMMDD.txt   # the recipient; copy it down
+   ```
+   Then **move the identity file off this machine.** The script below can prove the two recipient
+   strings differ; it cannot prove one of the keys is physically elsewhere. That is a human step, and
+   skipping it makes the whole exercise decorative.
+2. Back up with the script below. It is written to **refuse rather than guess**, to leave no
+   plaintext behind even when it fails, and to name its artefact the way the Restore half below
+   already looks for. Save it, or run it inline:
+   ```bash
+   #!/usr/bin/env bash
+   # RB-08 create-backup. Exit codes follow this repository's gate convention:
+   #   0 = written AND both custody paths proven   1 = refused, nothing kept
+   #   2 = written but a control could not be checked - NOT a pass
+   set -euo pipefail
+   umask 077        # verification writes PLAINTEXT state; this host's default umask is 0002
+
+   REPO="${REPO:-/opt/jol/repos/jol-control}"
+   SRC="${SRC:-$REPO/terraform.tfstate}"
+   DEST="${DEST:?DEST is required - a directory on a different block device}"
+   HOST_KEY="${HOST_KEY:-$HOME/.config/age/state-backup-key.txt}"
+   RECOVERY_KEY="${RECOVERY_KEY:-}"; RECOVERY_PUB="${RECOVERY_PUB:-}"
+   OUT=""; KEEP=0; CREATED=0; RC=0; TMP=()
+   # ONE exit trap. `trap ... RETURN` inside a function does not fire when that function calls
+   # `exit`, and does not fire when `set -e` aborts mid-function - both failure paths used to leak
+   # a temp file holding decrypted state. It also drops the artefact unless the run fully succeeded,
+   # so a rejected backup cannot sit on the backup disk looking like a snapshot - but ONLY a file
+   # this run created. Without CREATED, a refused same-second re-run deleted the ORIGINAL backup.
+   cleanup(){ local p; for p in "${TMP[@]:-}"; do if [ -n "$p" ]; then rm -f "$p"; fi; done
+              if [ "$KEEP" != 1 ] && [ "$CREATED" = 1 ]; then rm -f "${OUT:-}" "${OUT:-}.info"; fi; }
+   trap cleanup EXIT
+
+   [ -n "$RECOVERY_KEY" ] || [ -n "$RECOVERY_PUB" ] || {
+     echo "FAIL: set RECOVERY_KEY (identity file - verifies the off-host path) or";
+     echo "      RECOVERY_PUB (age1... - records it but cannot verify it)."; exit 1; }
+   [ -s "$SRC" ] || { echo "FAIL: source missing or 0 bytes: $SRC"; exit 1; }
+   # Validate shape AND content before writing. A document whose `resources` array is EMPTY is a
+   # perfectly valid state - it is exactly what this host produced when the inventory was destroyed
+   # (S2-012) - so `has("resources")` alone would certify a wiped state as a good backup.
+   jq -e '(.terraform_version|type=="string") and (.lineage|type=="string")
+          and (.serial|type=="number") and ((.resources|length) > 0)' "$SRC" >/dev/null 2>&1 || {
+     echo "FAIL: $SRC is not a populated Terraform state document.";
+     echo "      Needs terraform_version, lineage, a numeric serial and at least one resource."; exit 1; }
+   [ -d "$DEST" ] && [ -w "$DEST" ] || { echo "FAIL: DEST absent or not writable: $DEST"; exit 1; }
+   DEST_ABS="$(cd "$DEST" && pwd -P)"
+   case "$DEST_ABS" in
+     "$REPO"|"$REPO"/*) echo "FAIL: DEST is inside the repository ($DEST_ABS). Ciphertext - and on a"
+                        echo "      hard failure its plaintext sibling - must never land in a git tree."; exit 1;;
+   esac
+
+   HOST_PUB="$(age-keygen -y "$HOST_KEY")"
+   if [ -n "$RECOVERY_KEY" ]; then RECOVERY_PUB="$(age-keygen -y "$RECOVERY_KEY")"; fi
+   # Compares two recipient STRINGS. That detects "you passed the same key twice". It does not prove,
+   # and cannot prove, where either key is held.
+   [ "$HOST_PUB" != "$RECOVERY_PUB" ] || {
+     echo "FAIL: the recovery recipient equals HOST_KEY ($HOST_PUB).";
+     echo "      One custody path wearing two labels survives nothing the host does not."; exit 1; }
+
+   EXPECT_MD5="$(md5sum "$SRC" | awk '{print $1}')"
+   EMPTY_MD5="$(printf '' | md5sum | awk '{print $1}')"
+   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+   # Deliberately the same basename convention as /opt/jol/backup/tfstate/, so the Restore half
+   # below can actually find what this half writes.
+   OUT="$DEST_ABS/jol-control-terraform.tfstate.$STAMP.age"
+   # Reserve the name atomically: `age -o` overwrites an existing file without warning, and a
+   # second-granularity stamp means two runs in one second collide.
+   set -C
+   if ! : > "$OUT" 2>/dev/null; then set +C
+     echo "FAIL: $OUT already exists - refusing to overwrite an existing backup"; exit 1; fi
+   set +C
+   CREATED=1   # from here the trap may clean this path; before here the file is not ours to remove
+
+   age --encrypt --recipient "$HOST_PUB" --recipient "$RECOVERY_PUB" --output "$OUT" "$SRC"
+   chmod 600 "$OUT"
+   echo "written   : $OUT ($(stat -c%s "$OUT") bytes)"
+   echo "recipients: $HOST_PUB  $RECOVERY_PUB"
+
+   verify() {  # label, identity-file
+     local t m; t="$(mktemp)"; TMP+=("$t")
+     age --decrypt -i "$2" "$OUT" > "$t"
+     m="$(md5sum "$t" | awk '{print $1}')"
+     if [ "$m" = "$EMPTY_MD5" ]; then echo "FAIL [$1]: decrypted to ZERO BYTES - nothing was read"; exit 1; fi
+     if [ "$m" != "$EXPECT_MD5" ]; then echo "FAIL [$1]: md5 $m != source $EXPECT_MD5"; exit 1; fi
+     echo "PASS [$1]: a distinct identity opens this file and reproduces the source md5 $m"
+   }
+   verify host-key "$HOST_KEY"
+   if [ -n "$RECOVERY_KEY" ]; then
+     verify recovery-key "$RECOVERY_KEY"
+   else
+     RC=2   # deliberately not 0: an unproven control must not report success
+     echo "NOT VERIFIED [recovery-key]: only the recipient was supplied, so the off-host path is"
+     echo "                 recorded in the header but not proven to open this file. Prove it by"
+     echo "                 decrypting on the machine that holds the identity."
+   fi
+
+   DEC="$OUT.decoded"; TMP+=("$DEC")
+   age --decrypt -i "$HOST_KEY" "$OUT" > "$DEC"
+   if [ ! -f "$REPO/scripts/state_gate.py" ]; then
+     echo "FAIL: $REPO/scripts/state_gate.py not found - the inventory check cannot run.";
+     echo "      Do not report this backup as verified."; exit 2; fi
+   # The config directory is PINNED, not inherited. `state_gate.py` takes `dir` positionally with
+   # default `.`, so calling it with only --state judges the backup against whatever directory the
+   # operator happens to be standing in - measured from /tmp it answered `SAFE` over ZERO resource
+   # blocks. A vacuous pass, not an honest refusal.
+   set +e; python3 "$REPO/scripts/state_gate.py" "$REPO" --state "$DEC" | sed 's/^/    /'
+   G=${PIPESTATUS[0]}; set -e
+   if [ "$G" -ne 0 ]; then echo "FAIL [state-gate]: exit $G - refusing to certify this backup"; exit 1; fi
+
+   # Persist the facts the Restore half demands ("a checksum of the state you expect"). Without this
+   # file those numbers exist only on a terminal scrollback.
+   { echo "serial    : $(jq -r '.serial' "$SRC")"
+     echo "lineage   : $(jq -r '.lineage' "$SRC")"
+     echo "resources : $(jq '.resources|length' "$SRC")"
+     echo "instances : $(jq '[.resources[].instances[]]|length' "$SRC")"
+     echo "md5       : $EXPECT_MD5"
+     echo "created   : $STAMP"
+     echo "recipients: $HOST_PUB $RECOVERY_PUB"
+     echo "off-host-verified: $([ "$RC" = 0 ] && echo yes || echo no)"
+   } > "$OUT.info"; chmod 600 "$OUT.info"
+   KEEP=1
+   echo "OK: backup written and readable; recovery path status stated above (exit 2 = not verified)"
+   exit "$RC"
+   ```
+   Invoke it with the destination on the second disk. **Use the real filename, not the placeholder**
+   from step 1:
+   ```bash
+   DEST=/media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup \
+   RECOVERY_PUB=age18457pc8jfy8jrz7qhy36mzkxn7x4crvh79nmkqfdcyxnwn9urpyqgajvnj bash backup.sh
+   ```
+   Pass `RECOVERY_KEY=<identity file>` instead of `RECOVERY_PUB` when you hold both identities on the
+   host - at creation time, and on any restore rehearsal - to get the full two-`PASS` verification
+   and exit 0.
+
+**Expected output:** `written … (≈195 KB)` with mode 600, a `recipients:` line, `PASS [host-key]`, then
+either `PASS [recovery-key]` or `NOT VERIFIED [recovery-key]`, then the pinned `state-gate` report
+(`SAFE — state accounts for managed resources`), then an `OK:` line. **Exit code is the verdict:**
+`0` both paths proven · `2` written but the off-host path unproven (or the gate unreachable) · `1`
+refused, and no artefact left behind. A schedule that runs this must treat 2 as *not green*.
+
+**Why both `verify` calls matter, and why the second one is allowed to be skipped but not to be
+silent:** decrypting only with the host key proves the ciphertext is intact but says nothing about
+whether the off-host path works, and the off-host path is the only one that matters when the host is
+gone. Requiring the identity on the host would have made the script unusable for exactly the case it
+exists for — once you follow step 1 and move the key off this machine, `RECOVERY_KEY` cannot resolve.
+So the two modes are: **full verification** when you hold both identities (run this once, at creation,
+and again on any restore rehearsal), and **recipient-recorded / NOT VERIFIED** for routine backups.
+`NOT VERIFIED` is not a pass and must never be paraphrased as one.
+
+**What a failure means:** `FAIL: the recovery recipient equals HOST_KEY` → you pointed both at one
+key; the backup has a single custody path. `FAIL […]: decrypted to ZERO BYTES` → the decrypt produced
+nothing and the checksum would otherwise have been md5-of-nothing. `DEST absent or not writable` → the
+secondary disk is not mounted, or its directory is still `root:root` (`sudo chown jol:jol <DEST> &&
+sudo chmod 700 <DEST>` — verify each effect, a pasted sudo block can run only its first line).
+`refusing to overwrite an existing backup` → two runs landed in the same UTC second; wait or use a
+different destination, because a silently replaced snapshot is not a backup history.
+`DEST is inside the repository` → the artefact would sit in a git tree; pick a real backup device.
+`not a populated Terraform state document` → `SRC` is the wrong file, **or it is a wiped state**
+(`resources: []`), which the pre-write check rejects precisely because that shape is what this host
+produced when its inventory was destroyed. Every `exit 1` path removes the artefact it created, so a
+refusal leaves nothing on the backup disk. Note also why `age` must never be handed an empty filename:
+it silently falls back to reading **stdin**, and a backgrounded reader is stopped by `SIGTTIN` instead
+of failing.
+
+**Limitations of this script, stated plainly.** It checks that the two recipient **strings** differ
+and that each supplied identity reproduces the source md5. It does **not** and cannot verify:
+
+- that the recovery identity is held **off this machine** — the documented invocation currently points
+  at `~/.config/age/…`, so a `PASS [recovery-key]` proves a *second* key opens the file, not a *farther*
+  one. Until that file leaves the host, S2-012's core risk is untouched;
+- that `DEST` is a different **physical** device — it checks existence, writability and "outside the
+  repository", nothing more;
+- that the backup is **recent**, and nothing runs it on a schedule;
+- **disk-full or partial-write** failures beyond what the decrypt catches: the ciphertext is read back
+  by `verify`, so a truncated file fails, but a `SIGKILL` between reserving `$OUT` and finishing the
+  write leaves a 0-byte `.age` that the EXIT trap never got to remove. Check for it if a run vanishes.
+- Verification is **circular for a source that is already wrong in a valid-looking way**. The md5
+  round-trip proves the backup equals the source, never that the source is the inventory you meant to
+  keep. That is why the `.info` sidecar records `serial`/`lineage`/`instances` and why the Restore half
+  requires a checksum of the state you **expect**, not merely a backup that opens.
+
+**Tested 2026-10-27 — 17 cases, against the script as published in this file.** The block is
+extracted **by content** (`RB-08 create-backup`), 1 match from the 19 bash fences here; an earlier
+attempt extracted *the first* fence after the heading, which is the key-minting snippet, so "every
+assertion passed" while testing three unrelated lines and the negative case exited 0. Each run is
+pinned to one filename by a stub `date` on `PATH`, and asserts on **four** things: exit code, the
+verdict line, the number of files left in the destination, and whether any plaintext survived.
+
+| Result | Cases |
+|---|---|
+| `RC=0`, 2 artefacts (`.age` + `.info`, both mode 600) | distinct `RECOVERY_KEY` |
+| `RC=2`, 2 artefacts, `NOT VERIFIED` | distinct `RECOVERY_PUB` — off-host path unproven |
+| `RC=2`, **0** artefacts | `REPO` has no `state_gate.py` — refuses to certify, cleans up |
+| `RC=1`, **0** artefacts | recovery identity/recipient equals the host's (both modes); neither supplied; absent destination; `DEST` inside the repository; `SRC` a `Makefile`; `SRC` a **wiped state** (`resources: []`); `SRC` a valid-JSON plan fixture; `SRC` 0 bytes |
+| `RC=1`, original **preserved byte-identical**, file count unchanged | refused same-second re-run |
+
+Then: the `.info` sidecar was read back and carries `serial 306`, `lineage 25425c0f-…`, `resources 4`,
+`instances 119`, the source md5 and `off-host-verified: yes`; a `RECOVERY_PUB`-only ciphertext was
+independently opened with the recovery identity and reproduced the source md5; and a sweep of `/tmp`
+found no `.decoded` file and no document that parses as a populated state outside the repository.
+
+**Two of the 17 cases exist because a code review found defects my first 14 did not.** The earlier
+version wrote its verification temp files at the ambient umask (`0002` on this host → mode `664`,
+other-readable) and left them behind on every failure path, because `trap … RETURN` does not fire when
+a function calls `exit` or when `set -e` aborts mid-function — the inventory of 40 repositories in
+plaintext, beside the ciphertext, on the backup disk. It also invoked `state_gate.py` without pinning
+the config directory, which measured `SAFE` **over zero resource blocks** from a foreign CWD: a
+vacuous pass, not a refusal. And a first attempt to fix the leak introduced a worse bug — the cleanup
+trap deleted the artefact on *any* failure, so a refused same-second re-run **destroyed the original
+backup**; hence the `CREATED` flag, and hence the case that asserts preservation rather than mere
+refusal. `age --list-recipients` is **not available in age 1.1.1** — an early draft used it and died
+after encrypting, before verifying.
+
+**No test harness for this script is committed.** `tests/` holds the four gate suites only; the matrix
+above was run from a scratch directory and is not re-runnable from the repository. That is a real
+limitation of the claim in this paragraph, and the honest fix is a committed fixture-based suite.
+
+### Restoring
 
 **Prerequisites:** `age` on PATH; the X25519 identity `~/.config/age/state-backup-key.txt`
 (inventory row **AGE-1** in `docs/SECRETS_INVENTORY.md`); a *checksum of the state you expect*,
@@ -360,20 +612,32 @@ not just a backup you hope is right.
    cp -p terraform.tfstate* "$D/" 2>/dev/null; chmod a-w "$D"/*
    ( cd "$D" && sha256sum * > CHECKSUMS.sha256 )
    ```
-3. **Enumerate the candidates.** There is no automation behind these — they are manual snapshots:
+3. **Enumerate the candidates — in BOTH locations.** The set on `/opt/jol/backup` shares one device
+   with the live state; the `sdb1` copies written by the Create half above are the only ones that
+   survive that disk, and they use the same basename convention so one glob shape finds both.
    ```bash
    ls -la /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age
+   ls -la /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup/jol-control-terraform.tfstate.*.age
+   ```
+   Each backup has an `.info` sidecar with the `serial`, `lineage`, `instances`, `md5` and
+   `off-host-verified` recorded at creation. **Read the sidecar first** — it is the "checksum of the
+   state you expect" the prerequisite asks for, and it costs no decryption:
+   ```bash
+   for f in "$DEST"/*.info; do echo "== $(basename "$f")"; cat "$f"; done
    ```
 4. **Decrypt to a scratch file and compare metadata — never print state contents.** State carries
    the full inventory of every governed repository; it must not reach a log, a terminal scrollback
-   or a pasted message.
+   or a pasted message. Run this under `umask 077`: the decrypted file is plaintext credentials.
    ```bash
-   W=$(mktemp -d); chmod 700 "$W"
-   for f in /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age; do
+   W=$(mktemp -d); chmod 700 "$W"; umask 077
+   for f in /opt/jol/backup/tfstate/jol-control-terraform.tfstate.*.age \
+            /media/jol/32f7e56a-b96c-486a-93da-9e1a57567cfc/jol-state-backup/jol-control-terraform.tfstate.*.age; do
+     [ -f "$f" ] || continue
      age -d -i ~/.config/age/state-backup-key.txt "$f" > "$W/out.json" 2>/dev/null || continue
      echo "$(basename "$f")  bytes=$(stat -c%s "$W/out.json")  md5=$(md5sum "$W/out.json" | cut -d' ' -f1)"
      jq -r '"  serial=\(.serial) lineage=\(.lineage) instances=\([.resources[].instances[]]|length)"' "$W/out.json"
      jq -r '.resources[] | "    \(.type).\(.name) = \([.instances[]]|length)"' "$W/out.json"
+     rm -f "$W/out.json"
    done
    ```
    **Accept a candidate only on an exact match** of `serial`, `lineage`, instance count and, if you
