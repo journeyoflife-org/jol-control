@@ -8,6 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `QODER.md` — agent behaviour guidelines for Qoder sessions working in this repository: the four
+  principles (state assumptions before editing, minimum code, surgical diffs, goal-driven
+  verification) restated in this stack's terms — allow-list YAML, gate exit codes `0/1/2`, runbook
+  steps, captured-output fixtures — plus a section on what an agent session does to credentials,
+  `terraform.tfstate` and test fixtures, which the generic version of this advice omits. It is
+  **subordinate to `AGENTS.md`** and deliberately carries no enforcement facts: the file's own
+  precedence rule is that two documents restating §2 age apart and a reviewer cannot tell which one
+  did, so every countable claim was rewritten as a pointer. §8 separates what is measured from what
+  is not: the Document control block is gated (see the `make doc-gate` entry below), while adherence
+  to §1–§5 is measured by nothing, and the CI steps added today have not executed yet — so the file
+  is *partly* a control and *partly* a statement of expected behaviour, and says so in those words.
+  §7 records the ISO checklist numbering deviation without propagating it; that is now tracked as
+  finding S2-024 below rather than left inside a changelog line
+- `scripts/validate_doc_control.py`, `tests/test_doc_gate.py` (14 cases) and `make doc-gate` — the
+  STOP gate that makes the above claim checkable instead of rhetorical. It requires six fields in a
+  document's `## Document control` block, refuses when the `Authority` row names no governing file
+  (two rule documents in charge is the failure the document's own preamble forbids), and refuses
+  when `Last reviewed` is missing, unparseable, in the future, or older than the cadence — 0 pass /
+  1 violation / 2 cannot-check, with **both non-zero codes red in CI**, because a document whose
+  metadata could not be read is not a compliant document. A `Last reviewed` row was added to
+  `QODER.md` for this: the earlier §8 promised an "unexpired" check that no field in the block could
+  support, which is the same species of defect as S2-004. The fixture
+  `tests/fixtures/doc_control/qoder_real.md` is a slice of the live file and the suite asserts that
+  identity every run, so a fixture that rots apart from its document fails instead of testing
+  nothing. Two defects were then re-introduced into throwaway copies outside the repository:
+  disabling the expiry logic failed **7** assertions and emptying the required-field list failed
+  **3**, with the pristine copy green again — the gate is shown able to catch its own weakening
+  rather than passing vacuously. Wired into `compliance-scan.yml`'s `validate-repos` job, added to
+  `make test` (six suites → seven), and `AGENTS.md` §3 now carries the row with the measured outputs;
+  `agents-gate` was also added to `.PHONY`, which it had never been in. **No CI run has executed
+  these steps yet** — the workflow triggers on pull request, schedule and dispatch, so first
+  execution is this change's own run, and until then the proof is local
+- `docs/drift-findings.md` **S2-024** — four control IDs in `audit/iso27001-checklist.yml`
+  (`A.6.1`, `A.6.6`, `A.7.1`, `A.8.1`) carry titles that belong to different numbers in ISO/IEC
+  27001:2022, found while checking the IDs `QODER.md` §7 intended to cite. Recorded rather than
+  renumbered: re-keying an audit artifact moves its `implemented` / `not_implemented` claims onto
+  other controls, which is rewriting evidence under the guise of fixing a label. The entry states its
+  own verification boundary — the file's keys are greppable here, the standard's titles are licensed
+  text absent from this repository, so the mapping is labelled an expert reading pending confirmation
+  — and names the larger defect this is one instance of: `grep` for `audit/` across `scripts/` and
+  `.github/workflows/` returns **zero** matches, and `scripts/compliance_check.py` compares only the
+  framework *strings* in `repos/*.yml`, so a wrong, stale or absent control ID is invisible to every
+  control in this repository today
 - `scripts/backup_status.sh` and `make backup-status` — one pull that answers whether the state backup
   is fresh, provably on another physical disk (re-derived with `findmnt`/`lsblk`, not merely read back
   from the sidecar), and whether off-machine custody exists, with 0/1/2 semantics. **The normal answer

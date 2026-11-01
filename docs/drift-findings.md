@@ -45,6 +45,7 @@ documents cite them. In numeric order:
 | S2-021 | `retire_recovery_key.sh` printed the proof-of-custody nonce three times, including in a runnable command line | closed; fingerprint + hidden prompt, retire suite 15 → 20 cases |
 | S2-022 | A custody challenge had no lifetime, and re-packing silently orphaned any packet in transit | closed; 168h bound + warning, backup suite 56 → 62 cases |
 | S2-023 | The custody packet carried key and ciphertext together, and `verify` could run on the source host | closed; split delivery + source-host refusal, 6 cases added |
+| S2-024 | Four Annex A numbers in the ISO checklist carry titles that belong to different control numbers | open; recorded, deliberately not renumbered in place |
 
 Two undated sections are folded in where they arose: *Measurement traps* (how three readings
 here went wrong) and *Process slip* (an edit made from a stale clone).
@@ -2261,6 +2262,84 @@ never writes a record at all. The `proof=` line in the attested record names the
 
 **Files affected:** `scripts/offhost_rehearsal.sh`, `tests/test_backup_gate.sh` (58 → 62),
 `docs/runbooks.md` RB-08/RB-09, `AGENTS.md` §3.
+
+---
+
+### S2-024: Four Annex A control numbers in the ISO checklist carry titles that belong to other numbers
+
+**Discovered:** 2026-11-01, while writing `QODER.md` §7's pointer table and checking every
+control ID it intended to cite against the framework rather than against this repository's own
+file  
+**Status:** OPEN — recorded here, deliberately **not** renumbered in place; renumbering is an
+owner decision for the quarterly review, for the reasons under *Why this was not fixed*  
+**Severity:** S2. No control is weaker because of it. Every *citation* of those four IDs is
+unsafe, which is the class of defect this register already treats as an audit finding (S2-001,
+S2-002, S2-004: configuration and documents asserting things that do not hold).
+
+**Finding:** `audit/iso27001-checklist.yml` keys four sections by numbers whose canonical titles
+in ISO/IEC 27001:2022 Annex A are different controls, and whose titles actually live elsewhere:
+
+| ID as used here | Title in this file | What that number is in the standard | Where that title actually lives |
+|---|---|---|---|
+| `A.6.1` | "Information security roles and responsibilities" | 6.1 Screening | 5.2 |
+| `A.6.6` | "Access control for network and network services" | 6.6 Confidentiality or non-disclosure agreements | 8.20 / 8.21 |
+| `A.7.1` | "Physical and environmental security (user authentication)" | 7.1 Planning and preparation of remote working | 7.2–7.6 (physical and environmental), 8.5 secure authentication, 5.17 authentication information |
+| `A.8.1` | "Inventory of information and other associated assets" | 8.1 User endpoint devices | 5.9 |
+
+Checked and **not** flagged, to keep the finding scoped: `A.5.1`, `A.5.10`, `A.5.29`, `A.8.8`,
+`A.8.13`, `A.8.19`, `A.8.25` carry the right numbers for their subjects. `A.5.30`
+("Technology readiness for business continuity") and `A.8.25` ("Secure development lifecycle")
+are wording variants of "ICT readiness…" and "Secure development life cycle" — cosmetic. In
+`audit/soc2-checklist.yml` the keys are 2017 TSC **category** names used as criterion keys (the
+`CC6.1` group is titled "Logical and Physical Access Controls", which is the CC6 category, not
+the CC6.1 criterion) — paraphrase-level ambiguity, no wrong-numbering equivalent found; the file
+does at least declare its vintage in `version:`.
+
+**Verification boundary — read this before quoting the table.** The left half of the table is
+reproducible here: `grep -nE '^\s+A\.[0-9]+:|title:' audit/iso27001-checklist.yml`. The right
+half comes from ISO/IEC 27001:2022 Annex A, which is licensed text and **is not in this
+repository**, so it cannot be diffed by any command here. It is an expert reading, labelled as
+such, and the first remediation step is confirming it against the licensed copy before anything
+is filed externally.
+
+**Impact:** an auditor who resolves ID → evidence lands on the wrong control. Ask for `A.8.1`
+and the standard says *user endpoint devices*; the evidence offered is a repository inventory.
+Either the evidence is wrong or the organization does not know the standard it claims, and per
+this repository's own evidence rule an overstated control discounts every other assertion in
+the pack. Aggravating factor, measured today: **nothing reads these files.** `grep` for `audit/`
+across `scripts/` and `.github/workflows/` returns zero matches, and
+`scripts/compliance_check.py` only inspects `repos/*.yml` (`required_frameworks` at line 101
+compares the *strings* `soc2`/`gdpr`/`iso27001` in each repo definition). So a control ID in an
+audit checklist can be wrong, stale, or absent and no gate, plan or CI job will notice. That is
+the real defect; the four mis-numbered rows are one instance of it.
+
+**Why this was not fixed in place:**
+1. IDs are citation anchors. This register's own opening rule — numbers never change once other
+   documents cite them — applies with more force to audit artifacts, which are cited from
+   `docs/`, from `QODER.md` §7 and eventually from an auditor's request list.
+2. Renumbering moves *status* claims with them. `A.8.1-01` is `implemented`; if `A.8.1` is
+   re-keyed to `A.5.9`, the file now asserts that "user endpoint devices" is implemented. That
+   is rewriting evidence under the guise of fixing a label, which is exactly the failure mode
+   `QODER.md` §5 forbids editing captured artifacts for.
+3. The statuses themselves have not been re-measured since 2026-09-30 (the file's own
+   `Last reviewed` header), so any re-keying would need re-verification of each row anyway.
+
+**Recommended remediation (owner decision, not applied here):** add a non-destructive pointer
+per section — `canonical: "A.5.9"` beside the existing key — so a reader gets both the internal
+citation and the standard's number, with no ID churn and no status movement. Verify against the
+licensed Annex A text first. Then make the checklists *read* by something: extending
+`scripts/compliance_check.py` (or a small gate with this repository's 0/1/2 convention) to
+assert every `audit/*.yml` ID exists in a canonical list would convert three hand-corrected
+labels into a measured control. Adding a key cannot break the current script — established by
+reading it, not assumed.
+
+**Evidence:** `audit/iso27001-checklist.yml` lines 13–210 as of 2026-11-01; `grep -rn "audit/"
+scripts/ .github/workflows/` → no matches; `scripts/compliance_check.py:96-118` (frameworks are
+compared as strings from repo definitions only). Cross-referenced by `QODER.md` §7, which cites
+these IDs **as recorded in this repository** and states the deviation rather than propagating it
+as canonical.  
+**Files affected:** `audit/iso27001-checklist.yml`, `audit/soc2-checklist.yml` (vintage note
+only), `QODER.md` §7, this register.
 
 ---
 

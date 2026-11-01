@@ -2,7 +2,7 @@
 # JOL Control Plane — Makefile
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test backup-state backup-status backup-pack backup-attest retire-key clean init list-repos count-repos
+.PHONY: help validate plan plan-gate state-gate apply fmt fmt-check lint drift compliance test backup-state backup-status backup-pack backup-attest retire-key agents-gate doc-gate clean init list-repos count-repos
 
 .DEFAULT_GOAL := help
 
@@ -18,11 +18,12 @@ validate: ## Validate all repo YAML definitions
 compliance: ## Run full compliance check
 	python3 scripts/compliance_check.py
 
-test: ## Run gate self-tests (plan + state + drift + agents-table + backup + retire gates, no pytest required)
+test: ## Run gate self-tests (plan + state + drift + agents-table + doc-control + backup + retire gates, no pytest required)
 	python3 tests/test_plan_gate.py
 	bash tests/test_state_gate.sh
 	python3 tests/test_drift_gate.py
 	python3 tests/test_agents_gate.py
+	python3 tests/test_doc_gate.py
 	bash tests/test_backup_gate.sh
 	bash tests/test_retire_gate.sh
 
@@ -74,6 +75,13 @@ retire-key: ## Retire an age recovery identity ONLY after proving a copy on anot
 
 agents-gate: ## STOP gate — is AGENTS.md section 2 still a well-formed table with evidence per row
 	python3 scripts/validate_agents_table.py AGENTS.md
+
+# A rule document with no owner, no precedence and no review date is an assertion nobody
+# re-reads. This checks the block that makes the claim, not the claim's truth: 2 (cannot-check)
+# is a refusal, never a pass. QODER.md §8 cites this target as the reason its own status is
+# measured rather than asserted.
+doc-gate: ## STOP gate — does QODER.md still declare owner, precedence and an unexpired review
+	python3 scripts/validate_doc_control.py QODER.md
 
 # ── Terraform ────────────────────────────────────────────────────────────────
 init: ## Initialize Terraform
