@@ -110,11 +110,18 @@ def test_missing_file_fails_closed() -> None:
 
 
 def test_empty_file_fails_closed() -> None:
+    # Created with delete=False because the gate opens the path from a separate process, and removed in
+    # `finally` because `expect_*` records failures instead of raising - a bare unlink after the calls
+    # would be skipped by nothing today but silently leaked one 0-byte file per run for a year (61 were
+    # sitting in /tmp when this was found).
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         empty = handle.name
-    code, out = run_gate(empty)
-    expect_exit("empty plan JSON", EXIT_UNEVALUATED, code, out)
-    expect_text("empty plan", "UNEVALUATED", out)
+    try:
+        code, out = run_gate(empty)
+        expect_exit("empty plan JSON", EXIT_UNEVALUATED, code, out)
+        expect_text("empty plan", "UNEVALUATED", out)
+    finally:
+        Path(empty).unlink(missing_ok=True)
 
 
 def test_not_a_plan_fails_closed() -> None:

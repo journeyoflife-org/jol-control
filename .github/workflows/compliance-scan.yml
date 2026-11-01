@@ -51,6 +51,21 @@ jobs:
         # cell, a blank evidence column, a header-only table, a missing section.
         run: python3 tests/test_agents_gate.py
 
+      - name: Document-Control Gate (QODER.md)
+        # QODER.md §8 states what CI does and does not enforce about it. A claim about a
+        # control has to be measured, so this step fails the build when the document loses
+        # its owner, its classification, its precedence row or its review cadence. Exit
+        # codes 0 pass / 1 violation / 2 cannot-check, and both non-zero codes are red here:
+        # a document whose metadata could not be read is not a compliant document.
+        run: python3 scripts/validate_doc_control.py QODER.md
+
+      - name: Document-Control Gate Self-Test (prove that gate is not inert)
+        # 14 cases against a byte-identical capture of the live block. Two mutations of the
+        # gate itself (expiry logic disabled, required-field list emptied) each turn this red
+        # and the pristine copy green again, so the gate is shown able to catch its own
+        # weakening rather than passing vacuously.
+        run: python3 tests/test_doc_gate.py
+
   policy-compliance:
     name: "Policy Compliance Check"
     needs: validate-repos

@@ -22,8 +22,10 @@ Run directly (no pytest required):
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -40,6 +42,30 @@ EXIT_DRIFT = 1
 EXIT_UNEVALUATED = 2
 
 FAILURES: list[str] = []
+
+SCRATCH: list[str] = []
+
+
+def mkdtemp(prefix: str) -> str:
+    """A scratch directory that is removed when the suite ends, pass or fail.
+
+    This file used to call `tempfile.mkdtemp` directly and never clean up, so every run
+    of `make test` leaked two directories into /tmp. Measured after a day of running this
+    suite by hand: **182** `allowlist-*` and **286** `stub-*` directories, all created today.
+    A test harness that litters the machine it verifies is not a read-only tool, and the leak
+    also hides the real risk - a fixture left behind can be mistaken for a live definition tree.
+    """
+    path = tempfile.mkdtemp(prefix=prefix)
+    SCRATCH.append(path)
+    return path
+
+
+def purge_scratch() -> None:
+    while SCRATCH:
+        shutil.rmtree(SCRATCH.pop(), ignore_errors=True)
+
+
+atexit.register(purge_scratch)
 
 STUB = r"""#!/usr/bin/env bash
 # Replays captured gh output. Behaviour chosen by env vars set per test.
@@ -87,7 +113,7 @@ exit 125
 
 def write_allow_list(names: dict[str, str]) -> str:
     """A minimal repos/ directory: {name: visibility}."""
-    tmp = tempfile.mkdtemp(prefix="allowlist-")
+    tmp = mkdtemp("allowlist-")
     for name, visibility in names.items():
         Path(tmp, f"{name}.yml").write_text(f"name: {name}\nvisibility: {visibility}\n")
     return tmp
@@ -96,7 +122,7 @@ def write_allow_list(names: dict[str, str]) -> str:
 def run_gate(listing: object, repos_dir: str, *, list_rc: int = 0, list_stderr: str = "",
              api_exists: list[str] | None = None,
              api_unverifiable: list[str] | None = None) -> tuple[int, str]:
-    stub_dir = Path(tempfile.mkdtemp(prefix="stub-"))
+    stub_dir = Path(mkdtemp("stub-"))
     stub = stub_dir / "gh"
     stub.write_text(STUB)
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)

@@ -74,6 +74,9 @@ T
 # backend supplied out-of-band through a rendered template (bootstrap's shape)
 mkdir -p "$W/tplbe"
 printf 'resource "aws_s3_bucket" "state" { bucket = "x" }\n' > "$W/tplbe/main.tf"
+# Single quotes are the point: this writes a Terraform template whose ${bucket} must survive to the file,
+# not be expanded by the shell writing it.
+# shellcheck disable=SC2016
 printf 'terraform {\n  backend "s3" {\n    bucket = "\${bucket}"\n  }\n}\n' > "$W/tplbe/backend.tpl"
 # not a directory
 printf 'x\n' > "$W/notadir"
