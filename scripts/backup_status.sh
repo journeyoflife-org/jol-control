@@ -15,7 +15,9 @@
 #   2  UNEVALUATED - a fact needed for the verdict could not be read. Never a pass.
 set -uo pipefail
 
-REPO="${REPO:-/opt/jol/repos/jol-control}"
+# Derived from this script's own location: a committed host path passed locally and failed on a
+# runner — same defect as backup_state.sh, asserted by tests/test_backup_gate.sh case 9b.
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 DEST="${DEST:-/mnt/jol-backup/jol-control}"
 KEYDIR="${KEYDIR:-$HOME/.config/age}"
 RECIPIENT_FILE="${RECIPIENT_FILE:-$KEYDIR/offdisk-recipient.txt}"

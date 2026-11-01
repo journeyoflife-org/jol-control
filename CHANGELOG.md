@@ -388,6 +388,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced it. No behaviour change; all 11 drift-gate tests still pass
 
 ### Fixed
+- **A committed host path made the backup suite pass at home and go red on the runner.**
+  `backup_state.sh`, `backup_status.sh`, `offhost_rehearsal.sh` and `state_backup_guard.sh` each
+  defaulted `REPO` to `/opt/jol/repos/jol-control` — one machine's checkout — so on a runner
+  `backup_state.sh` looked for `scripts/state_gate.py` in a tree that is not there. The merge commit
+  `be418ae` made `Dev — Validate` **fail 3 cases** (4, 21, 23), each short-circuiting on
+  `state_gate.py not found`: a refusal about the runner's filesystem, not about the guard under test.
+  `REPO` now derives from the script's own location, which resolves to the identical directory on this
+  host — including from cron, which runs `cd /opt/jol/repos/jol-control && scripts/...` — so behaviour
+  here is unchanged. **Case 9b was written first and observed failing** (62 passed, 1 failed) before the
+  fix, then passing (63 passed, 0 failed): a copy of `backup_state.sh` relocated to a fresh tree with
+  `REPO` unset must name **its own** tree in the refusal — asserting the path rather than the exit code,
+  because case 9 already shows this script can print "not found" while testing something else, and a
+  pre-fix run prints no path at all (it found the gate in the other tree and ran on). Case 19 then went
+  red on its own — the RB-08 fenced copy had drifted — which is that identity assertion doing the job it
+  was built for, and the fence is synced. Note for the record: S2-020's "runner-shaped census" (30
+  passed, 22 skipped) varied `SRC` but left `REPO` at the host default, so it could not have seen this
+  and reported green for a suite that was not green on a real runner
 - **S2-023 — the remedy for a single-carrier failure was itself a single carrier.** Asked plainly whether
   this was being done correctly, two things came back wrong. (1) `pack` put the private identity and the
   snapshot it opens in **one directory** and told the operator to carry that directory — one lost stick or
