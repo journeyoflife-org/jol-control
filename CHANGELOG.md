@@ -37,9 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **3**, with the pristine copy green again — the gate is shown able to catch its own weakening
   rather than passing vacuously. Wired into `compliance-scan.yml`'s `validate-repos` job, added to
   `make test` (six suites → seven), and `AGENTS.md` §3 now carries the row with the measured outputs;
-  `agents-gate` was also added to `.PHONY`, which it had never been in. **No CI run has executed
-  these steps yet** — the workflow triggers on pull request, schedule and dispatch, so first
-  execution is this change's own run, and until then the proof is local
+  `agents-gate` was also added to `.PHONY`, which it had never been in. **Executed in CI the same
+  day, not merely wired**: run 41327071307 (`pull_request` at `9e547e0`) ran both new steps and
+  printed `document-control fields checked: 6 (reviewed 2026-11-01, cadence 92d)`,
+  `PASSED — QODER.md document control is complete, subordinate to AGENTS.md, and within its review
+  cadence` and `PASSED — 14 doc-gate tests, 0 failures`; dispatch run 41327101799 repeats it at the
+  same commit, and `Drift Detection` remained `skipped` on those events, as designed
 - `docs/drift-findings.md` **S2-024** — four control IDs in `audit/iso27001-checklist.yml`
   (`A.6.1`, `A.6.6`, `A.7.1`, `A.8.1`) carry titles that belong to different numbers in ISO/IEC
   27001:2022, found while checking the IDs `QODER.md` §7 intended to cite. Recorded rather than

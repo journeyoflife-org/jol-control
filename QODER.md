@@ -362,9 +362,13 @@ are measured here, and one thing conspicuously is not.
 - Nothing checks whether an agent *obeyed* §1–§5. The gate reads metadata, not conduct. So
   "Qoder agents follow QODER.md" remains an assertion; what became a measurement is only that
   this document is owned, subordinate to `AGENTS.md`, and inside its review cadence.
-- **First CI execution is owed.** The workflow steps were added 2026-11-01 and no run of
-  them exists yet; the current proof is local — `make doc-gate` and `make test` exit 0 on this
-  host. Do not cite the wiring as a live control until a run says so.
+- **CI execution is measured, not promised.** Run **41327071307** (`pull_request`, event at
+  commit `9e547e0`) executed both new steps: the gate printed
+  `document-control fields checked: 6 (reviewed 2026-11-01, cadence 92d)` then
+  `PASSED — QODER.md document control is complete, subordinate to AGENTS.md, and within its
+  review cadence`, and the self-test printed `PASSED — 14 doc-gate tests, 0 failures`. Run
+  **41327101799** (`workflow_dispatch`, same commit) repeats it. The `Drift Detection` job was
+  `skipped` on that event, as designed — it runs on schedule and dispatch only.
 
 This file is therefore *partly* a control and *partly* a statement of expected behaviour.
 Evidence for the first half is a command output; the second half has none, and a reviewer
