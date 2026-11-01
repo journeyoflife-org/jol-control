@@ -18,7 +18,9 @@
 set -uo pipefail
 umask 077
 
-REPO="${REPO:-/opt/jol/repos/jol-control}"
+# Derived from this script's own location: a committed host path passed locally and failed on a
+# runner — same defect as backup_state.sh, asserted by tests/test_backup_gate.sh case 9b.
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 STATE="${STATE:-$REPO/terraform.tfstate}"
 DEST="${DEST:-/mnt/jol-backup/jol-control}"
 KEYDIR="${KEYDIR:-$HOME/.config/age}"

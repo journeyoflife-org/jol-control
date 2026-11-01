@@ -426,7 +426,13 @@ different block device.
    set -euo pipefail
    umask 077        # verification writes PLAINTEXT state; this host's default umask is 0002
 
-   REPO="${REPO:-/opt/jol/repos/jol-control}"
+   # The tree this script lives in — NOT one machine's checkout path. The hard-coded default made the
+   # suite pass at home and fail on the merge commit, where the runner had checked the tree out under
+   # /home/runner/...: three guard cases then short-circuited on "state_gate.py not found" for a reason
+   # unrelated to what they were testing (see tests/test_backup_gate.sh case 9b). On the control-plane
+   # host this resolves to the same directory the old literal named, including from cron, which runs
+   # `cd /opt/jol/repos/jol-control && scripts/state_backup_guard.sh`.
+   REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
    SRC="${SRC:-$REPO/terraform.tfstate}"
    DEST="${DEST:?DEST is required - a directory on a different block device}"
    HOST_KEY="${HOST_KEY:-$HOME/.config/age/state-backup-key.txt}"

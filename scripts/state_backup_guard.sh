@@ -17,7 +17,11 @@
 set -uo pipefail
 umask 077
 
-REPO="${REPO:-/opt/jol/repos/jol-control}"
+# Derived from this script's own location: a committed host path passed locally and failed on a
+# runner — same defect as backup_state.sh, asserted by tests/test_backup_gate.sh case 9b. The cron
+# line runs `cd /opt/jol/repos/jol-control && scripts/state_backup_guard.sh`, which resolves here to
+# the same directory the old literal named.
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 DEST="${DEST:-/mnt/jol-backup/jol-control}"
 # SRC is the state this guard protects. It used to be implicit (`$REPO/terraform.tfstate` inside
 # backup_state.sh), which made the scheduled path untestable without a real inventory: on a CI runner

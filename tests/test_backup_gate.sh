@@ -140,6 +140,25 @@ run 1 "8 SRC is 0 bytes"                          "$W/dest" 0 "source missing or
 # Case 9 exercises the pinned-config fix. With REPO pointed at a tree that has no
 # scripts/state_gate.py the run must refuse to certify (exit 2) and clean up after itself.
 run 2 "9 state-gate unreachable -> not certified" "$W/dest" 0 "state_gate.py not found" REPO="$W/norepo" SRC="$SYNTH" RECOVERY_KEY=x
+# 9b: with REPO unset the script must look for the inventory check BESIDE ITSELF. This is the case
+# that would have caught the CI failure: backup_state.sh defaulted REPO to /opt/jol/repos/jol-control
+# — one machine's filesystem, committed — so the suite passed at home and failed on the merge commit,
+# where the runner had checked the tree out somewhere else and three guard cases short-circuited on a
+# refusal that named a path unrelated to what was under test. A relocated copy holding only
+# backup_state.sh must name its OWN tree in the refusal: assert the path, not just the refusal,
+# because case 9 already proves the script can say "not found" — for the wrong reason and still pass.
+mkdir -p "$W/reloc/scripts"
+cp "$GATE" "$W/reloc/scripts/backup_state.sh"
+timeout 60 env PATH="$W/bin:$PATH" DEST="$W/dest" SRC="$SYNTH" RECOVERY_KEY=x \
+  bash "$W/reloc/scripts/backup_state.sh" </dev/null >"$W/o" 2>&1
+if grep -qF -- "$W/reloc/scripts/state_gate.py" "$W/o"; then
+  pass=$((pass+1)); printf '  ok    %-46s (looked beside itself)\n' "9b default REPO is the script's tree"
+else
+  fail=$((fail+1)); printf '  FAIL  %-46s (it looked at a hard-coded host path)\n' "9b default REPO is the script's tree"
+  # No path at all here means it FOUND the gate in some other tree and ran on — the host-default bug.
+  grep -oE '/[^ ]*state_gate\.py' "$W/o" | head -2 | sed 's/^/          looked at: /'
+  sed -n '1,2p' "$W/o" | sed 's/^/          output: /'
+fi
 # 21-23: the device check. Refused when both paths resolve to one disk, and warned-about (never
 # silently passed) when the disk cannot be resolved at all. The stub directory that maps sdb1 to
 # nvme0n1 reproduces exactly the layout this host had before RB-08 existed. Numbered past 20 so the
