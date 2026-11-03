@@ -275,3 +275,20 @@ an explicit per-target instruction:
   not in this workspace; requires a signed commit.
 - Editing any workflow / the `.github` library / `jol-control` (Phase 8, LAST).
 - `terraform`/apply actions of any kind — none are required to adopt mise.
+
+## Batch assessments (2026-11-03) — migrated + held, with evidence
+
+**Migrated & green this batch (fleet now 9/40):**
+- jol-auth (PR #20 -> e1a6370f): uv + [build-system]; jobs Lint/Test/Pre-commit preserved.
+- jol-analytics-ai (PR #23 -> b7ffb825): interpreter-only mise + venv-on-PATH; kept `pip install -e .` + requirements unchanged; `test (3.12)` preserved.
+- jol-link-registry (PR #16 -> 7f804b86): venv+mise; FIXED an undeclared dependency — declared `sqlalchemy[asyncio]` (greenlet) the async conftest needs (main only passed by incidental env luck); lint/test/zero-pii green.
+- jol-bitrix24-integration (PR #13 -> f2c11626): venv+mise; `MISE_PYTHON_VERSION` drives the `test (3.11)`/`test (3.12)` matrix; security-scan PII/secret greps + pip-audit preserved.
+
+**Assessed, deliberately NOT migrated:**
+- jol-core: no workflows/toolchain/manifests, zero check-runs — a docs dump mislabeled platform/Python; migration would invent a control (governance reclassification finding).
+- jol-mcp-servers: CI already SHA-pinned (setup-uv + uv.lock) with a 4-server matrix + bandit/pip-audit/semgrep/trufflehog/ZAP; rewrite is high-blast-radius, marginal-benefit. Narrow lint-type-test-only slice offered.
+- jol-security: no Python/Node toolchain (shell scripts + already-pinned actions markdownlint-cli2/gitleaks); nothing for mise to pin.
+
+**Pre-existing governance reds observed (out of mise scope):**
+- jol-security main: `Verify Commit Signatures`, `Markdown Lint`, `Scan for Secrets` all failing — notably unsigned commits on main vs its own signing policy.
+- Recurring fleet gap: missing `.licenserc.yaml` -> skywalking-eyes `License Header Check` red (fixed on jol-repo-template PR #19; still open fleet-wide).

@@ -90,3 +90,30 @@ This plan is the batch application of RB-06 across the 20 repos:
   satisfying SOC2 CC8 / ISO 27001 change management.
 - This document changes **nothing**. Execution begins only after ADR-013 is accepted and the
   owner authorizes the specific repo(s).
+
+## Appendix A — Ready-to-execute procedure (GATED — do NOT run until ADR-013 is accepted)
+
+Worked example for one spoke (`jol-site-basilica`). Re-scan for the id first; never assume it.
+
+```bash
+# 1) discover id + confirm which ruleset is the review one
+gh api repos/journeyoflife-org/jol-site-basilica/rulesets --jq '.[]|{id,name,enforcement}'
+# 2) BACKUP out-of-band (this file is the rollback artifact)
+gh api repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> > backup__basilica__<ID>.json
+# 3) build relaxed body: change ONLY the two review parameters; strip server fields
+jq 'del(.id,.node_id,.url,._links)
+    | .rules |= map(if .name=="pull_request"
+        then .parameters.required_approving_review_count=0 | .parameters.require_code_owner_review=false
+        else . end)' backup__basilica__<ID>.json > relaxed.json
+# 4) PUT full-replace (rulesets are replace, not patch)
+gh api -X PUT repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> --input relaxed.json
+# 5) read-back with cache-bust; compare VALUES, not status
+gh api "repos/journeyoflife-org/jol-site-basilica/rulesets/<ID>?cb=$RANDOM" \
+  --jq '.rules[]|select(.name=="pull_request").parameters|{required_approving_review_count,require_code_owner_review}'
+# 6) acceptance: a trivial signed PR now reports mergeable_state=clean (not blocked)
+# ROLLBACK: gh api -X PUT .../rulesets/<ID> --input backup__basilica__<ID>.json
+```
+
+Guards: keep `required_signatures`, `required_linear_history`, `deletion`, `non_fast_forward`, and
+`bypass_actors` byte-identical; confirm each survived the full-replace PUT in step 5. Do `.github`
+last (S1-007). `jol-dr` cannot be relaxed this way (private → rulesets return 403).
