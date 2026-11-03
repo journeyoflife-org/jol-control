@@ -302,3 +302,9 @@ While `next jol-security` was HELD for mise (no toolchain to pin), three of its 
 - **Scan for Secrets** — STILL RED (out of scope): `gitleaks-action` v2 needs a `GITLEAKS_LICENSE` secret that is unset (config gap, not a real leak). GitHub `required_signatures` remains the real merge gate; a few historic commits (`eb29a858`, `cd9b9b28`) are genuinely `reason=unsigned`.
 
 Reusable lessons: a pinned action SHA freezes the bundled tool version — read the run log, not the action repo's package.json; the REST commits API exposes `verification.signature/payload/verified/reason` but `signature_type` is GraphQL-only.
+
+## jol-security `Scan for Secrets` — interim fix + pending license decision (2026-11-03)
+
+`gitleaks-action` v2+ requires a paid `GITLEAKS_LICENSE`; without it the step errors and scans **nothing** (jol-security's `Scan for Secrets` was red for this reason, not a real leak — local `gitleaks detect` over full history reported no leaks). Closed via PR #8 -> `bb62240b`: replaced the licensed Action wrapper with the **free gitleaks engine** pinned v8.30.1 (SHA256-verified download, `gitleaks detect --source . --redact` over full history), keeping the org's `secrets-scan.sh` and the `Scan for Secrets` job name. jol-security main is now fully green (7/7).
+
+**Owner decision (pending):** after the current deployment completes, the owner will purchase a gitleaks license. At that point this step can migrate back to `gitleaks/gitleaks-action` with `GITLEAKS_LICENSE` set as a repository secret. The pinned-CLI step is an intentional **interim measure**, not a permanent rejection of the Action. Track here / on PR #6 until the license is procured.
