@@ -107,15 +107,15 @@ gh api repos/journeyoflife-org/jol-site-basilica/rulesets --jq '.[]|{id,name,enf
 # 2) BACKUP out-of-band (this file is the rollback artifact)
 gh api repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> > backup__basilica__<ID>.json
 # 3) build relaxed body: change ONLY the two review parameters; strip server fields
-jq 'del(.id,.node_id,.url,._links)
-    | .rules |= map(if .name=="pull_request"
+jq 'del(.id,.node_id,.url,.html_url,._links,.version,.source,.current_user_can_bypass)
+    | .rules |= map(if .type=="pull_request"
         then .parameters.required_approving_review_count=0 | .parameters.require_code_owner_review=false
         else . end)' backup__basilica__<ID>.json > relaxed.json
 # 4) PUT full-replace (rulesets are replace, not patch)
 gh api -X PUT repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> --input relaxed.json
 # 5) read-back with cache-bust; compare VALUES, not status
 gh api "repos/journeyoflife-org/jol-site-basilica/rulesets/<ID>?cb=$RANDOM" \
-  --jq '.rules[]|select(.name=="pull_request").parameters|{required_approving_review_count,require_code_owner_review}'
+  --jq '.rules[]|select(.type=="pull_request").parameters|{required_approving_review_count,require_code_owner_review}'
 # 6) acceptance: a trivial signed PR now reports mergeable_state=clean (not blocked)
 # ROLLBACK: gh api -X PUT .../rulesets/<ID> --input backup__basilica__<ID>.json
 ```
@@ -123,3 +123,8 @@ gh api "repos/journeyoflife-org/jol-site-basilica/rulesets/<ID>?cb=$RANDOM" \
 Guards: keep `required_signatures`, `required_linear_history`, `deletion`, `non_fast_forward`, and
 `bypass_actors` byte-identical; confirm each survived the full-replace PUT in step 5. Do `.github`
 last (S1-007). `jol-dr` cannot be relaxed this way (private → rulesets return 403).
+
+**Verified 2026-11-04:** executed on `jol-site-basilica` (ruleset `23356341`) — PUT + cache-busted
+read-back (ac=0, code_owner=false, all 5 rules intact); acceptance PR #11 reached
+`mergeable_state=clean` and squash-merged `a48fc08d` with **no admin bypass**. Rule selector is
+`.type`, not `.name`. Rollback artifact `basilica_23356341_original_*.json` (sha256 4d0cbd3d…).
