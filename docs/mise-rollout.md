@@ -292,3 +292,13 @@ an explicit per-target instruction:
 **Pre-existing governance reds observed (out of mise scope):**
 - jol-security main: `Verify Commit Signatures`, `Markdown Lint`, `Scan for Secrets` all failing — notably unsigned commits on main vs its own signing policy.
 - Recurring fleet gap: missing `.licenserc.yaml` -> skywalking-eyes `License Header Check` red (fixed on jol-repo-template PR #19; still open fleet-wide).
+
+## jol-security governance-red closure (2026-11-03) — follow-on to the batch hold
+
+While `next jol-security` was HELD for mise (no toolchain to pin), three of its own governance checks were already red on main. Two are now closed; one remains:
+
+- **Markdown Lint** (63 errors) — CLOSED, jol-security PR #6 -> `fc92ab2e`. Root cause pinned: the `markdownlint-cli2-action@b4c9fea` bundle runs **cli2 v0.13.0 / markdownlint v0.34.0** (not the action repo's newer package.json), so **no MD060**. Fixed at the CI engine: `--fix` cleared MD032/MD022/MD031/MD034; MD040 -> `text` language added to 11 plain ASCII fences (renders unchanged); MD024 -> `siblings_only` for Keep-a-Changelog headings (option key is `siblings_only`, not `siblings_ok`); MD041 -> PR-template first line promoted to H1. Verified 0 at 0.13.0 locally and green in CI.
+- **Verify Commit Signatures** (permanently red) — CLOSED, jol-security PR #7 -> `08d7d4d6`. Root cause: `enforce-signing.yml` ran raw `git verify-commit`, but the runner imports no public key, so it false-failed on EVERY commit — including a user-PGP commit and GitHub merge commits the API marks `verified=true/reason=valid`. Replaced with GitHub's authoritative `commit.verification.verified` over the PR/push commit range; job name + triggers preserved; still fails genuinely-unsigned commits.
+- **Scan for Secrets** — STILL RED (out of scope): `gitleaks-action` v2 needs a `GITLEAKS_LICENSE` secret that is unset (config gap, not a real leak). GitHub `required_signatures` remains the real merge gate; a few historic commits (`eb29a858`, `cd9b9b28`) are genuinely `reason=unsigned`.
+
+Reusable lessons: a pinned action SHA freezes the bundled tool version — read the run log, not the action repo's package.json; the REST commits API exposes `verification.signature/payload/verified/reason` but `signature_type` is GraphQL-only.
