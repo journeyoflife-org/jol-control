@@ -4,16 +4,20 @@ Owner: architecture (agent-drafted)
 Classification: internal
 Framework: SOC2 / GDPR / ISO 27001
 Status: **DRAFT — NO enforcement has been changed. Execution is gated on ADR-013 acceptance and an explicit owner decision.**
-Measured: 2026-11-03 (live `gh api .../rulesets` re-scan; counts drift between audits — re-scan before executing).
+Measured: first 2026-11-03, re-scanned 2026-11-03T22:05Z per-ruleset `GET /rulesets/{id}`; counts
+  drift between audits — re-scan before executing.
 
 ## Why this exists
 
 `solo_mode = true` (`terraform.tfvars:16`) makes Terraform omit the review blocks in
-`branch-protection.tf`, yet **20 public repositories carry hand-configured rulesets** that
+`branch-protection.tf`, yet **19 public repositories carry hand-configured rulesets** that
 re-impose `required_approving_review_count >= 1` and/or `require_code_owner_review` — the
 exact controls `solo_mode` removes. With a single org member (GitHub does not count an
 author's own approval), those rules are **unsatisfiable**, so a normal PR can only merge by
 admin bypass. This blocks the mise rollout (and any other change) on those repos.
+  A 20th repository, `.github`, also carries a `protect-main` ruleset, but its pull-request rule
+  sets `approving=0`/`code_owner=false` — so it is **not** review-blocking (its non-merge is the
+  separate S1-007). The accurate review-blocking count is therefore **19**.
 
 - Invariant (ADR-013, `jol-docs` PR #4, *Proposed*): *no repository may demand more approvals
   than the organization can supply.* Make it a testable rule, not prose.
@@ -23,7 +27,7 @@ admin bypass. This blocks the mise rollout (and any other change) on those repos
   the baseline, and `scripts/drift_detect.py` reads only `name,visibility`, so `make drift`
   reports NO DRIFT while these repos are governed by undeclared config (see `docs/drift-findings.md` S1-008).
 
-## Live inventory (2026-11-03)
+## Live inventory (re-scanned 2026-11-03)
 
 | Repository | Ruleset(s) | Note |
 |---|---|---|
@@ -37,10 +41,12 @@ admin bypass. This blocks the mise rollout (and any other change) on those repos
 | jol-llm | protect-main | |
 | jol-site-basilica / -cathedral / -diocese / -deanery / -parish / -funeral / -cemetery-care / -protestant / -orthodox / -other-church | protect-main | 10 spokes |
 | jol-deploy | protect-main | |
-| .github | protect-main | shared CI library + S1-007 merge-block mystery — do LAST |
+| .github | protect-main | non-review ruleset (`approving=0`/`code_owner=false`); shared CI library + S1-007 merge-block mystery — do LAST |
 | jol-dr | (403 — private) | rulesets unavailable on this plan; cannot relax via this API |
 
-Total public repos with rulesets: **20**. `jol-dr` is unobservable (private).
+Total public repos with rulesets: **20** — but only **19 impose a review/code-owner requirement a
+single member cannot satisfy**; `.github` is the 20th and its rule is non-review. `jol-dr` is
+unobservable (private).
 
 ## Target state (the declared solo posture)
 
@@ -55,7 +61,7 @@ Relax **only** the `pull_request` rule of each `protect-main` ruleset to match `
 ## Per-repository procedure — reversible (mechanics live in `docs/runbooks.md` RB-06)
 
 RB-06 already documents the two-API blindness and the GET→mutate→PUT full-replace hazard.
-This plan is the batch application of RB-06 across the 20 repos:
+This plan is the batch application of RB-06 across the 19 review-blocking repos (`.github` last):
 
 1. **Backup** the exact current ruleset JSON out-of-band before any write:
    `gh api repos/journeyoflife-org/<repo>/rulesets/<id> > backup__<repo>__<id>.json`
