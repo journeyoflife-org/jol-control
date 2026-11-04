@@ -107,15 +107,15 @@ gh api repos/journeyoflife-org/jol-site-basilica/rulesets --jq '.[]|{id,name,enf
 # 2) BACKUP out-of-band (this file is the rollback artifact)
 gh api repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> > backup__basilica__<ID>.json
 # 3) build relaxed body: change ONLY the two review parameters; strip server fields
-jq 'del(.id,.node_id,.url,._links)
-    | .rules |= map(if .name=="pull_request"
+jq 'del(.id,.node_id,.url,.html_url,._links,.version,.source,.current_user_can_bypass)
+    | .rules |= map(if .type=="pull_request"
         then .parameters.required_approving_review_count=0 | .parameters.require_code_owner_review=false
         else . end)' backup__basilica__<ID>.json > relaxed.json
 # 4) PUT full-replace (rulesets are replace, not patch)
 gh api -X PUT repos/journeyoflife-org/jol-site-basilica/rulesets/<ID> --input relaxed.json
 # 5) read-back with cache-bust; compare VALUES, not status
 gh api "repos/journeyoflife-org/jol-site-basilica/rulesets/<ID>?cb=$RANDOM" \
-  --jq '.rules[]|select(.name=="pull_request").parameters|{required_approving_review_count,require_code_owner_review}'
+  --jq '.rules[]|select(.type=="pull_request").parameters|{required_approving_review_count,require_code_owner_review}'
 # 6) acceptance: a trivial signed PR now reports mergeable_state=clean (not blocked)
 # ROLLBACK: gh api -X PUT .../rulesets/<ID> --input backup__basilica__<ID>.json
 ```
@@ -123,3 +123,44 @@ gh api "repos/journeyoflife-org/jol-site-basilica/rulesets/<ID>?cb=$RANDOM" \
 Guards: keep `required_signatures`, `required_linear_history`, `deletion`, `non_fast_forward`, and
 `bypass_actors` byte-identical; confirm each survived the full-replace PUT in step 5. Do `.github`
 last (S1-007). `jol-dr` cannot be relaxed this way (private → rulesets return 403).
+
+**Verified 2026-11-04:** executed on `jol-site-basilica` (ruleset `23356341`) — PUT + cache-busted
+read-back (ac=0, code_owner=false, all 5 rules intact); acceptance PR #11 reached
+`mergeable_state=clean` and squash-merged `a48fc08d` with **no admin bypass**. Rule selector is
+`.type`, not `.name`. Rollback artifact `basilica_23356341_original_*.json` (sha256 4d0cbd3d…).
+
+## Relaxation campaign — executed (2026-11-04)
+
+ADR-013 accepted (`jol-docs` PR #4 → `af1d47d0`); the per-repo RB-06 relaxation below then ran
+under explicit owner authorization. Rollback JSON (+ `sha256`) for every change is in
+`/home/jol/.local/share/jol-ruleset-backups/`; restore = PUT the `_original_*`/`_predelete_*`
+file back to the same ruleset id.
+
+**Method (each repo):** minimal full-replace `PUT` altering ONLY the `pull_request` rule
+(`required_approving_review_count` 1→0, `require_code_owner_review` true→false);
+`required_signatures`, `required_linear_history`, `deletion`, `non_fast_forward` and
+`bypass_actors` left byte-identical; verified by a cache-busted read-back of the changed VALUES,
+then an acceptance PR merged with **no admin bypass** (for jol-hub, proven by its dependabot PRs
+reaching `MERGEABLE/CLEAN`).
+
+**Review/code-owner gate removed + merit-merge proven — 17 of 19:** all ten `jol-site-*` spokes
+(basilica `23356341`, cathedral `23356345`, cemetery-care `23356356`, deanery `23356349`,
+diocese `23356346`, funeral `23356354`, orthodox `23356360`, other-church `23356363`, parish
+`23356352`, protestant `23356357`); `jol-ecommerce-engine` protect-main `23356333` (its
+`protect-release-tags` `20754411` left intact); `jol-domain-taxonomy` `23356278`;
+`jol-hermes-agents` `23356368`; `jol-rag-server` `23356332`; `jol-llm` `23356366`;
+`jol-compliance` protect-main `23356340` (other active ruleset `18733439` has a satisfiable
+`compliance-lint` status check; `18790594` disabled); and `jol-hub` — protect-main `23356334`
+review relaxed **and** the stale `~master` `14827989` (whose `required_status_checks`
+`compliance-check`/`ci` match nothing) **deleted**.
+
+**Still blocked by a SEPARATE, non-review gate — 2 of 19 (relax kept, not force-merged):**
+`jol-infrastructure` `18809087` has a `required_status_checks` rule whose contexts
+`Infrastructure Validation / <job>` don't match the real bare check names (unsatisfiable);
+`jol-deploy` `23732532`'s own `Validate Configs` check fails. Both need those required-status-check
+contexts corrected/removed — a distinct change with its own owner decision.
+
+`.github` is non-review (its block is the separate S1-007) and `jol-dr` is private/403-unobservable;
+neither is among the 19. Appendix A above once used the wrong rule selector; the correct one is
+`.type=="pull_request"` (a `.name` selector silently matches nothing). The relaxation was executed
+with `.type`.
